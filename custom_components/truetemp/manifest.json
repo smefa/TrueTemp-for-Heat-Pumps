@@ -9,5 +9,5 @@
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/smefa/TrueTemp-for-Heat-Pumps/issues",
   "requirements": ["astral"],
-  "version": "0.4.4.1"
+  "version": "0.4.4.2"
 }
