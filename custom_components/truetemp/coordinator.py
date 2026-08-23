@@ -30,6 +30,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 import aiohttp
+from astral.sun import azimuth as astral_azimuth
 from astral.sun import elevation as astral_elevation
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
@@ -863,6 +864,9 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
                             astral_elevation(
                                 location.observer, now + timedelta(hours=t_h)
                             ),
+                            astral_azimuth(
+                                location.observer, now + timedelta(hours=t_h)
+                            ),
                             cloud,
                         ),
                     )
@@ -880,6 +884,18 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
             return float(sun_state.attributes.get("elevation", 0.0))
         except (TypeError, ValueError):
             return 0.0
+
+    def _read_sun_azimuth(self) -> float:
+        # Falls back to 180 (due south) rather than 0, so a missing/unparsable
+        # reading degrades to the old always-south assumption instead of
+        # wrongly zeroing out a real, in-range solar reading.
+        sun_state = self.hass.states.get("sun.sun")
+        if sun_state is None:
+            return 180.0
+        try:
+            return float(sun_state.attributes.get("azimuth", 180.0))
+        except (TypeError, ValueError):
+            return 180.0
 
     def _read_price(self) -> tuple[float | None, bool]:
         entity_id = _entry_value(self.entry, CONF_NORDPOOL_PRICE_ENTITY, None)
@@ -982,6 +998,7 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
         indoor_ok: bool,
         raw_outdoor_temp_c: float,
         sun_elevation_deg: float,
+        sun_azimuth_deg: float,
         cloud_coverage_pct: float | None,
     ) -> bool:
         """Step the lag estimator and the offset learner exactly one cycle.
@@ -1026,7 +1043,9 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
         # never a wild correction, so no extra guard is needed here.
         estimated_solar_gain_c = 0.0
         if self.solar_input_enabled:
-            solar_effect = solar_effect_of(sun_elevation_deg, cloud_coverage_pct)
+            solar_effect = solar_effect_of(
+                sun_elevation_deg, sun_azimuth_deg, cloud_coverage_pct
+            )
             estimated_solar_gain_c = SOLAR_GAIN_C * solar_effect
 
         try:
@@ -1148,6 +1167,7 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
         cloud_coverage_pct = forecast_read.cloud_coverage_pct
         cloud_ok = forecast_read.cloud_ok
         sun_elevation_deg = self._read_sun_elevation()
+        sun_azimuth_deg = self._read_sun_azimuth()
         current_price, price_ok = self._read_price()
         self._sync_source_issue(
             "indoor_sensor_unavailable",
@@ -1281,6 +1301,7 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
             indoor_ok,
             raw_outdoor_temp_c,
             sun_elevation_deg,
+            sun_azimuth_deg,
             cloud_coverage_pct,
         )
 
@@ -1304,6 +1325,7 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
                 wind_speed_ms=wind_speed_ms,
                 wind_data_available=wind_ok,
                 sun_elevation_deg=sun_elevation_deg,
+                sun_azimuth_deg=sun_azimuth_deg,
                 cloud_coverage_pct=cloud_coverage_pct,
                 cloud_data_available=cloud_ok,
                 current_price=current_price,

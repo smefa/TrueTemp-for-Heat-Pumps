@@ -198,18 +198,26 @@ def resolve_heating_hard_limit_engaged(
     return raw_outdoor_temp_c >= HEATING_HARD_LIMIT_C
 
 
-def solar_effect_of(sun_elevation_deg: float, cloud_coverage_pct: float | None) -> float:
+def solar_effect_of(
+    sun_elevation_deg: float, sun_azimuth_deg: float, cloud_coverage_pct: float | None
+) -> float:
     """Fraction of full solar gain available right now, through a fixed
     south-facing vertical window (no per-house orientation input; south is
     the assumed case this input is meant for).
 
-    Geometry is `cos(elevation)`, not `sin(elevation)`: a vertical pane is lit
-    best by low, streaming-in sun, not by sun overhead, so gain falls to zero
-    as the sun approaches zenith rather than at the horizon. Zero true azimuth
-    tracking means this overcredits mornings/evenings when the sun is well
-    off due south — accepted, because that error is concentrated in summer
-    (wide azimuth swing, long days), when heating is barely running and the
-    term barely matters.
+    Geometry is `cos(elevation) * cos(azimuth_offset)`, not `sin(elevation)`
+    alone: a vertical pane is lit best by low, streaming-in sun square to the
+    glass, not by sun overhead, so gain falls to zero as the sun approaches
+    zenith rather than at the horizon. `azimuth_offset` is how far the sun
+    currently sits from due south (`sun_azimuth_deg - 180`, HA's convention of
+    0=north/clockwise); its cosine is the standard angle-of-incidence term for
+    a flat vertical surface, and is clamped to zero once the sun swings
+    beyond +/-90° off south — at that point it is behind the wall, not in
+    front of it. This replaces an earlier version of this function that
+    dropped the azimuth term entirely and assumed the sun was always due
+    south: harmless at midday, but it meant a low morning or evening sun
+    scored as if square-on even when it was really raking in from the side or
+    already behind the house.
 
     Multiplied by an atmospheric transmittance term, `0.7^(air_mass^0.678)`,
     air mass being `1/sin(elevation)`: low sun travels through much more
@@ -219,10 +227,9 @@ def solar_effect_of(sun_elevation_deg: float, cloud_coverage_pct: float | None) 
     relative to summer, since the geometry term now rewards exactly the low
     sun angles the atmosphere term discounts, rather than both terms
     discounting low sun the same way. The peak, therefore, lands at a modest
-    elevation (roughly 30-35°) rather than at zenith, and never approaches
-    1.0 — a fixed vertical pane never gets the full extraterrestrial dose the
-    old shape treated as achievable. `SOLAR_GAIN_C` was calibrated against
-    the old, larger-peaking shape and needs a fresh fit against this one.
+    elevation (roughly 30-35°, sun due south) rather than at zenith, and never
+    approaches 1.0 — a fixed vertical pane never gets the full extraterrestrial
+    dose the old shape treated as achievable.
 
     Cloud discount is `1 - 0.75 * cloud_fraction^3.4`, not linear: partly
     cloudy skies stay close to full brightness (diffuse light dominates well
@@ -239,9 +246,13 @@ def solar_effect_of(sun_elevation_deg: float, cloud_coverage_pct: float | None) 
     if sun_elevation_deg <= 0.0:
         return 0.0
     elevation_rad = radians(sun_elevation_deg)
+    azimuth_offset_rad = radians(sun_azimuth_deg - 180.0)
+    incidence_factor = cos(elevation_rad) * cos(azimuth_offset_rad)
+    if incidence_factor <= 0.0:
+        return 0.0
     air_mass = 1.0 / sin(elevation_rad)
     transmittance = 0.7 ** (air_mass**0.678)
-    aperture_factor = cos(elevation_rad) * transmittance
+    aperture_factor = incidence_factor * transmittance
     cloud_fraction = (cloud_coverage_pct or 0.0) / 100.0
     cloud_factor = 1.0 - 0.75 * cloud_fraction**3.4
     return aperture_factor * cloud_factor
@@ -819,6 +830,7 @@ class HeuristicInputs:
     wind_speed_ms: float
     wind_data_available: bool
     sun_elevation_deg: float
+    sun_azimuth_deg: float
     cloud_coverage_pct: float | None
     cloud_data_available: bool
     current_price: float | None
@@ -990,7 +1002,9 @@ def compute(inputs: HeuristicInputs, params: HeuristicParams) -> HeuristicResult
     # Solar effect is a physical fact, not a control decision, so it is computed
     # unconditionally — before the hard-limit branch — because the learner and
     # the logs want reality rather than a zeroed value on warm days.
-    solar_effect = solar_effect_of(inputs.sun_elevation_deg, inputs.cloud_coverage_pct)
+    solar_effect = solar_effect_of(
+        inputs.sun_elevation_deg, inputs.sun_azimuth_deg, inputs.cloud_coverage_pct
+    )
 
     if resolve_heating_hard_limit_engaged(
         inputs.raw_outdoor_temp_c, inputs.prev_heating_hard_limit_engaged

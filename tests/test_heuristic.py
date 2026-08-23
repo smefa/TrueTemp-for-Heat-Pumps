@@ -43,6 +43,7 @@ def make_inputs(**overrides) -> HeuristicInputs:
         wind_speed_ms=0.0,
         wind_data_available=True,
         sun_elevation_deg=0.0,
+        sun_azimuth_deg=180.0,
         cloud_coverage_pct=0.0,
         cloud_data_available=True,
         current_price=None,
@@ -69,28 +70,54 @@ class TestSolarEffectOf:
     for confirmation the extraction did not change `compute()`'s behaviour."""
 
     def test_sun_below_horizon_is_zero(self):
-        assert heuristic.solar_effect_of(-20.0, 0.0) == 0.0
+        assert heuristic.solar_effect_of(-20.0, 180.0, 0.0) == 0.0
 
     def test_sun_at_zenith_is_zero(self):
         """A fixed vertical window gets nothing from directly overhead sun —
         the defining difference from the old sin(elevation) shape, which
         peaked here instead."""
-        assert heuristic.solar_effect_of(90.0, 0.0) == pytest.approx(0.0, abs=1e-9)
+        assert heuristic.solar_effect_of(90.0, 180.0, 0.0) == pytest.approx(0.0, abs=1e-9)
 
     def test_full_cloud_cover_still_passes_diffuse_light(self):
         """Overcast discounts hard but doesn't zero out — diffuse light still
         gets through."""
-        clear = heuristic.solar_effect_of(45.0, 0.0)
-        overcast = heuristic.solar_effect_of(45.0, 100.0)
+        clear = heuristic.solar_effect_of(45.0, 180.0, 0.0)
+        overcast = heuristic.solar_effect_of(45.0, 180.0, 100.0)
         assert overcast == pytest.approx(clear * 0.25)
         assert overcast > 0.0
 
     def test_missing_cloud_data_is_treated_as_clear(self):
         """Same "assume clear" behaviour `compute()` documents for a missing
         forecast — None must not collapse the term to zero."""
-        assert heuristic.solar_effect_of(30.0, None) == pytest.approx(
-            heuristic.solar_effect_of(30.0, 0.0)
+        assert heuristic.solar_effect_of(30.0, 180.0, None) == pytest.approx(
+            heuristic.solar_effect_of(30.0, 180.0, 0.0)
         )
+
+    def test_sun_due_south_is_unaffected_by_azimuth_term(self):
+        """Azimuth offset of zero (sun_azimuth_deg=180, HA's convention) must
+        reduce to the old always-south formula exactly — the new term is a
+        pure extension, not a rescale of the south case."""
+        assert heuristic.solar_effect_of(30.0, 180.0, 0.0) == pytest.approx(0.489, abs=5e-3)
+
+    def test_sun_square_off_south_is_zero(self):
+        """90° off south (due east/west) is edge-on to a south-facing pane —
+        no direct gain, regardless of elevation."""
+        assert heuristic.solar_effect_of(30.0, 90.0, 0.0) == pytest.approx(0.0, abs=1e-9)
+        assert heuristic.solar_effect_of(30.0, 270.0, 0.0) == pytest.approx(0.0, abs=1e-9)
+
+    def test_sun_behind_the_house_is_zero(self):
+        """Beyond 90° off south the sun is behind the wall, not just edge-on —
+        must clamp to zero rather than go negative."""
+        assert heuristic.solar_effect_of(30.0, 40.0, 0.0) == 0.0
+        assert heuristic.solar_effect_of(30.0, 320.0, 0.0) == 0.0
+
+    def test_evening_off_south_sun_scores_less_than_due_south(self):
+        """The symptom this term was added to fix: a low evening sun well off
+        south must score below the same elevation due south, not the same or
+        more."""
+        due_south = heuristic.solar_effect_of(10.0, 180.0, 50.0)
+        evening_west = heuristic.solar_effect_of(10.0, 250.0, 50.0)
+        assert 0.0 < evening_west < due_south
 
 
 class TestComposition:
@@ -103,7 +130,7 @@ class TestComposition:
             make_params(),
         )
         assert result.solar_effect == pytest.approx(
-            heuristic.solar_effect_of(45.0, 30.0)
+            heuristic.solar_effect_of(45.0, 180.0, 30.0)
         )
 
 
@@ -203,7 +230,7 @@ class TestComposition:
             make_inputs(sun_elevation_deg=45.0, cloud_coverage_pct=0.0),
             make_params(enable_solar_input=False),
         )
-        assert result.solar_effect == pytest.approx(heuristic.solar_effect_of(45.0, 0.0))
+        assert result.solar_effect == pytest.approx(heuristic.solar_effect_of(45.0, 180.0, 0.0))
         assert result.sun_adjustment_c == 0.0
 
     def test_output_is_clamped_to_sane_bounds(self):

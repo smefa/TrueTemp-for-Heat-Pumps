@@ -193,6 +193,7 @@ def run(
             wind_speed_ms=0.0,
             wind_data_available=True,
             sun_elevation_deg=-10.0,
+            sun_azimuth_deg=180.0,
             cloud_coverage_pct=100.0,
             cloud_data_available=True,
             current_price=price,

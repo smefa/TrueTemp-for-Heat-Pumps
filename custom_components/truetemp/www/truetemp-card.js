@@ -238,9 +238,10 @@ class TrueTempCard extends HTMLElement {
     );
   }
 
-  _tooltip(t, key) {
+  _tooltip(t, key, vars) {
     const text = t[key] || EN[key];
-    return text ? ` title="${this._esc(text)}"` : "";
+    if (!text) return "";
+    return ` title="${this._esc(vars ? fmt(text, vars) : text)}"`;
   }
 
   // Matches truetemp-vacation-card.js's own formatter, since a date/time
@@ -268,11 +269,11 @@ class TrueTempCard extends HTMLElement {
   // else right now.
   _cells(pairs, t) {
     return pairs
-      .map(([k, v, explanation, entityId]) => {
+      .map(([k, v, explanation, entityId, titleVars]) => {
         const off = v === DISABLED ? " co-off" : "";
         const clickable = entityId && this._state(entityId) ? " co-clickable" : "";
         const display = v === DISABLED ? t.badgeDisabled : v;
-        const title = explanation ? this._tooltip(t, explanation) : "";
+        const title = explanation ? this._tooltip(t, explanation, titleVars) : "";
         const interactive = clickable
           ? ` data-entity="${this._esc(entityId)}" role="button" tabindex="0"`
           : "";
@@ -580,12 +581,29 @@ class TrueTempCard extends HTMLElement {
     const preRampDisabled = attrs.weather_preramp_c === DISABLED;
     const preCoolDisabled = attrs.sun_precool_c === DISABLED;
 
+    // Pre-ramp (weather) and pre-cool (sun) are independent lookahead terms —
+    // opposite signs, different lead times, each gated by its own toggle —
+    // but they're shown as one combined box: a disabled term contributes 0 to
+    // the sum rather than blanking the whole box, and the tooltip breaks the
+    // two back out so which one is driving (or off) is never hidden.
+    const preAdjustDisabled = preRampDisabled && preCoolDisabled;
+    const rampDisplay = preRampDisabled ? t.badgeDisabled : this._num(attrs.weather_preramp_c, 2, " °C");
+    const coolDisplay = preCoolDisabled ? t.badgeDisabled : this._num(attrs.sun_precool_c, 2, " °C");
+    const preAdjustSum =
+      (preRampDisabled ? 0 : Number(attrs.weather_preramp_c) || 0) +
+      (preCoolDisabled ? 0 : Number(attrs.sun_precool_c) || 0);
+
     const terms = [
       [t.learnedOffset, this._num(offset && offset.state, 2, " °C"), "explainLearnedOffset", this._entities.offset],
       [t.termSun, sunDisabled ? DISABLED : this._num(attrs.sun_adjustment_c, 2, " °C"), "explainSun"],
       [t.termWind, windDisabled ? DISABLED : this._num(attrs.wind_adjustment_c, 2, " °C"), "explainWind"],
-      [t.termPreRamp, preRampDisabled ? DISABLED : this._num(attrs.weather_preramp_c, 2, " °C"), "explainPreRamp"],
-      [t.termPreCool, preCoolDisabled ? DISABLED : this._num(attrs.sun_precool_c, 2, " °C"), "explainPreCool"],
+      [
+        t.termPreAdjust,
+        preAdjustDisabled ? DISABLED : this._num(preAdjustSum, 2, " °C"),
+        "explainPreAdjust",
+        null,
+        { ramp: rampDisplay, cool: coolDisplay },
+      ],
       [t.termPrice, priceDisabled ? DISABLED : this._num(attrs.price_adjustment_c, 2, " °C"), "explainPriceAdjustment"],
       [t.termTotalChange, this._num(attrs.total_adjustment_c, 2, " °C"), "explainTotalChange"],
     ];
