@@ -440,6 +440,7 @@ class StatusSensor(TrueTempEntity, SensorEntity):
                 attrs["cloud_sun_forecast_ok"] = result.cloud_data_available
             if self.coordinator.price_configured:
                 attrs["price_ok"] = result.price_data_available
+                attrs["price_forecast"] = self.coordinator.price_forecast_series()
 
         # --- Output breakdown --------------------------------------------------
         # Every term behind the published value, plus the plain-language

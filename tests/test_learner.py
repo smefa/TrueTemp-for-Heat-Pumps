@@ -74,6 +74,42 @@ class TestBinning:
         assert "below" in learner.bin_label(0)
         assert "above" in learner.bin_label(learner.N_BINS - 1)
 
+    def test_hovering_on_an_edge_holds_the_previous_bin(self):
+        """A reading that sits right on an edge must not flip the occupied bin
+        back and forth every cycle — that splits samples across two bins and
+        keeps restarting the baseline dwell timer."""
+        edge = learner.BIN_EDGES[2]  # -5.0
+        lower_index = 2
+        upper_index = 3
+        assert learner.bin_index_for(edge, lower_index) == lower_index
+        assert learner.bin_index_for(edge + 0.01, lower_index) == lower_index
+        assert learner.bin_index_for(edge - 0.01, upper_index) == upper_index
+
+    def test_clearing_the_edge_by_the_hysteresis_margin_switches_bins(self):
+        edge = learner.BIN_EDGES[2]  # -5.0
+        lower_index = 2
+        upper_index = 3
+        assert (
+            learner.bin_index_for(edge + learner.BIN_HYSTERESIS_C, lower_index)
+            == upper_index
+        )
+        assert (
+            learner.bin_index_for(
+                edge - learner.BIN_HYSTERESIS_C, upper_index
+            )
+            == lower_index
+        )
+
+    def test_a_large_jump_switches_immediately_without_hysteresis(self):
+        """Hysteresis only guards a single edge — a real, multi-bin swing in
+        outdoor temperature is not the noise-on-an-edge case it exists for."""
+        assert learner.bin_index_for(20.0, 0) == learner.N_BINS - 1
+
+    def test_no_previous_index_gives_the_raw_answer(self):
+        edge = learner.BIN_EDGES[2]
+        assert learner.bin_index_for(edge) == 3
+        assert learner.bin_index_for(edge - 0.01) == 2
+
 
 class TestAuthorityRamp:
     def test_starts_minimal_and_ends_maximal(self):

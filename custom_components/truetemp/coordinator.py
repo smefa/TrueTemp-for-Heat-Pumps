@@ -928,6 +928,18 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
                     continue
         return entries
 
+    def price_forecast_series(self) -> list[dict[str, object]]:
+        """Today/tomorrow's price curve as the card's graph reads it: one
+        {start, price} dict per slot, in chronological order. Public (unlike
+        `_read_price_entries`) because sensor.py publishes this verbatim as an
+        attribute for truetemp-card.js to plot — the heuristic engine itself
+        only wants the hours-from-now shape `_price_forecast_offsets` builds.
+        """
+        return [
+            {"start": start.isoformat(), "price": price}
+            for start, price in sorted(self._read_price_entries(), key=lambda e: e[0])
+        ]
+
     def _price_forecast_offsets(self) -> tuple[tuple[float, float], ...] | None:
         """Day-ahead price as (hours_from_now, price) pairs, or None.
 

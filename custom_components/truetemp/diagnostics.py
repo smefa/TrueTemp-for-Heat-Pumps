@@ -10,6 +10,12 @@ things; the log is a long, opt-in time series most users never enable. Neither
 gives a complete cross-sectional snapshot of everything at once when something
 looks wrong right now.
 
+`recent_history` bridges the two: the last `DIAGNOSTICS_HISTORY_DAYS` of the
+log, if data logging has been on long enough to have any. It's what turns
+"the offset table looks odd" into "and here's the trend that produced it"
+without a separate replay session. Empty, not an error, if logging was never
+enabled — the entities and tables above already stand on their own.
+
 The artefact that appears nowhere else is the **full offset table** — every
 outdoor band's learned offset, capacity ceiling, observed recovery rate and
 sample count. The `learned_offset` sensor shows only the band currently
@@ -44,7 +50,9 @@ from .const import (
     CONF_INDOOR_CLIMATE_ENTITY,
     CONF_OHMONWIFI_HOST,
     CONF_OUTPUT_NUMBER_ENTITY,
+    DIAGNOSTICS_HISTORY_DAYS,
 )
+from .data_logger import async_read_recent_records
 from .heuristic import (
     COLD_CAUTIONS,
     PRICE_TIERS,
@@ -90,6 +98,9 @@ async def async_get_config_entry_diagnostics(
     result = coordinator.data
     tier = resolve_price_tier(coordinator.price_comfort_tier)
     caution = resolve_cold_caution(coordinator.cold_caution)
+    recent_history = await async_read_recent_records(
+        hass, entry.entry_id, DIAGNOSTICS_HISTORY_DAYS
+    )
 
     return {
         "config": {
@@ -187,5 +198,11 @@ async def async_get_config_entry_diagnostics(
             "price_tiers": {name: asdict(t) for name, t in PRICE_TIERS.items()},
             "cold_caution": asdict(caution),
             "cold_cautions": {name: asdict(c) for name, c in COLD_CAUTIONS.items()},
+        },
+        # Trend window from the local data log, oldest first. See module
+        # docstring; empty if data logging has never been enabled.
+        "recent_history": {
+            "days": DIAGNOSTICS_HISTORY_DAYS,
+            "records": recent_history,
         },
     }

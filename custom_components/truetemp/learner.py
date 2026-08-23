@@ -133,6 +133,14 @@ MODEL_VERSION = "offset_learner_v1"
 BIN_EDGES: tuple[float, ...] = (-15.0, -10.0, -5.0, 0.0, 5.0, 10.0, 15.0)
 N_BINS = len(BIN_EDGES) + 1
 
+# How far outdoor temperature must clear a bin edge before the occupied bin
+# actually changes. Without this, a reading sitting right on an edge flips the
+# bin back and forth every cycle — splitting closed-loop samples between two
+# bins instead of building evidence in one, and restarting the baseline dwell
+# timer (see `bin_entered_s` below) each time it flips back. Sized above
+# typical sensor resolution (0.1 degC) so ordinary noise cannot cross it.
+BIN_HYSTERESIS_C = 0.3
+
 # --- Control law -----------------------------------------------------------
 # Degrees of outdoor spoof equivalent to one degree of steady indoor change.
 # Physically motivated rather than tuned: spoofing outdoor +1 degC and letting
@@ -388,12 +396,31 @@ class LearnerResult:
     model_version: str = MODEL_VERSION
 
 
-def bin_index_for(outdoor_c: float) -> int:
-    """Which bin an outdoor temperature falls in."""
+def _raw_bin_index_for(outdoor_c: float) -> int:
+    """Which bin an outdoor temperature falls in, with no hysteresis applied."""
     for index, edge in enumerate(BIN_EDGES):
         if outdoor_c < edge:
             return index
     return N_BINS - 1
+
+
+def bin_index_for(outdoor_c: float, prev_index: int | None = None) -> int:
+    """Which bin an outdoor temperature falls in.
+
+    With `prev_index` given, a move to an adjacent bin only takes effect once
+    `outdoor_c` clears the edge between them by `BIN_HYSTERESIS_C` — otherwise
+    the previous bin is held. A jump of more than one bin (a real change, not
+    noise on an edge) always takes effect immediately. `prev_index=None` gives
+    the raw, hysteresis-free answer, which is what a first cycle or a
+    from-scratch lookup wants.
+    """
+    raw_index = _raw_bin_index_for(outdoor_c)
+    if prev_index is None or abs(raw_index - prev_index) != 1:
+        return raw_index
+    edge = BIN_EDGES[min(raw_index, prev_index)]
+    if raw_index > prev_index:
+        return raw_index if outdoor_c >= edge + BIN_HYSTERESIS_C else prev_index
+    return raw_index if outdoor_c <= edge - BIN_HYSTERESIS_C else prev_index
 
 
 def bin_label(index: int) -> str:
@@ -655,7 +682,7 @@ def step(state: LearnerState, inputs: LearnerInputs) -> tuple[LearnerState, Lear
     Never raises: every guard degrades to "hold the current offset and explain
     why", because this function's output goes straight to a heat pump.
     """
-    index = bin_index_for(inputs.outdoor_temp_c)
+    index = bin_index_for(inputs.outdoor_temp_c, state.prev_bin_index)
     bins = state.bins
     if len(bins) != N_BINS:  # defensive: a truncated restore
         bins = tuple(OutdoorBin() for _ in range(N_BINS))

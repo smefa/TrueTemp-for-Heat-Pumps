@@ -207,6 +207,12 @@ DEFAULT_HEAT_CURVE_OFFSET_INVERT = False
 UPDATE_INTERVAL_MINUTES = 15
 LEARNER_STEP_SECONDS = UPDATE_INTERVAL_MINUTES * 60
 
+# How much of the local JSONL data log (see data_logger.py) diagnostics
+# attaches as a trend window. Opt-in and best-effort: empty if data logging
+# was never turned on. Kept short enough that even a fully populated window
+# stays a reasonable size to paste into a GitHub issue.
+DIAGNOSTICS_HISTORY_DAYS = 3
+
 # How long after this config entry's setup to hold off raising a source-unavailable
 # Repair issue. HA restarts entities in no guaranteed order, so a sensor that is
 # perfectly healthy can still read unavailable/unknown for the first minute or two
@@ -223,7 +229,7 @@ STARTUP_GRACE_PERIOD_MINUTES = 5
 # changes — the main file or any of the language files.
 FRONTEND_STATIC_URL_PREFIX = "/truetemp"
 FRONTEND_CARD_URL = f"{FRONTEND_STATIC_URL_PREFIX}/truetemp-card.js"
-FRONTEND_JS_VERSION = "17"
+FRONTEND_JS_VERSION = "19"
 
 # The vacation-plans card is a second, independent bundle (see
 # www/truetemp-vacation-card.js's module docstring for why) with its own

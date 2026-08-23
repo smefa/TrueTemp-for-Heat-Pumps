@@ -914,6 +914,15 @@ class HeuristicResult:
     price_band_start: float | None = None
     price_band_full: float | None = None
     price_median: float | None = None
+    # The same band `price_band_start`/`price_band_full` would hold, but never
+    # gated behind `enable_price_compensation` — for a display (e.g. the
+    # card's price graph) that wants to colour hours by the real brake
+    # thresholds regardless of whether braking is switched on, the way
+    # `current_price`/`price_median` already do. `price_band_start`/`_full`
+    # stay gated: those mean "braking is engaged here", which is false with
+    # compensation off no matter what the math says.
+    price_forecast_band_start: float | None = None
+    price_forecast_band_full: float | None = None
     # Echoed straight from `HeuristicInputs` — see that dataclass's docstring
     # for what each means and why they live there rather than being
     # recomputed here.
@@ -1023,6 +1032,8 @@ def compute(inputs: HeuristicInputs, params: HeuristicParams) -> HeuristicResult
     price_band_start: float | None = None
     price_band_full: float | None = None
     price_median: float | None = None
+    price_forecast_band_start: float | None = None
+    price_forecast_band_full: float | None = None
     price_flat_day = False
     no_forecast = False
     # Pre-braking is timed off the fall time and pre-charging off the rise
@@ -1041,6 +1052,7 @@ def compute(inputs: HeuristicInputs, params: HeuristicParams) -> HeuristicResult
             no_forecast = True
         else:
             start, full, price_median, band_engaged = band
+            price_forecast_band_start, price_forecast_band_full = start, full
             # Everything past this point is braking behaviour, not display —
             # stays gated on price_for_braking so a house with compensation
             # off gets the median for free but never a brake threshold.
@@ -1317,6 +1329,8 @@ def compute(inputs: HeuristicInputs, params: HeuristicParams) -> HeuristicResult
         price_band_start=price_band_start,
         price_band_full=price_band_full,
         price_median=price_median,
+        price_forecast_band_start=price_forecast_band_start,
+        price_forecast_band_full=price_forecast_band_full,
         price_significance_factor=inputs.price_significance_factor,
         today_price_spread_c=inputs.today_price_spread_c,
         seasonal_reference_spread_c=inputs.seasonal_reference_spread_c,

@@ -16,9 +16,10 @@
 // frontend entity registry, so renaming entities never breaks it.
 //
 // Optional config:
-//     bands: false     hide the per-band offset table
-//     price: false     hide the price section
-//     sources: false   hide the source-health row
+//     bands: false       hide the per-band offset table
+//     price: false       hide the price section
+//     priceGraph: false  hide the price-forecast graph
+//     sources: false     hide the source-health row
 
 import { STRINGS as EN } from "./lang/en.js";
 import { STRINGS as DE } from "./lang/de.js";
@@ -158,7 +159,8 @@ class TrueTempCard extends HTMLElement {
   }
 
   getCardSize() {
-    return this._config && this._config.bands === false ? 7 : 11;
+    const base = this._config && this._config.bands === false ? 7 : 11;
+    return this._config && this._config.priceGraph === false ? base : base + 2;
   }
 
   static getConfigElement() {
@@ -366,6 +368,112 @@ class TrueTempCard extends HTMLElement {
       </div>`;
   }
 
+  // Today/tomorrow's price curve, one bar per slot, coloured by the SAME
+  // brake thresholds `price_band_start`/`price_band_full` use for the cells
+  // above — but read from `price_forecast_band_start`/`_full`, which the
+  // backend fills in unconditionally (see HeuristicResult's docstring on
+  // those fields), so the graph classifies hours the same way whether price
+  // compensation is switched on or off. Only falls back to a quartile split
+  // of the forecast's own spread when those aren't available yet (too few
+  // forecast points to judge a day's distribution, or no price data at all).
+  _priceGraph(attrs, t) {
+    const forecast = attrs.price_forecast;
+    if (!Array.isArray(forecast) || forecast.length < 2) return "";
+
+    const points = forecast
+      .map((p) => ({ time: new Date(p.start).getTime(), price: Number(p.price) }))
+      .filter((p) => Number.isFinite(p.time) && Number.isFinite(p.price))
+      .sort((a, b) => a.time - b.time);
+    if (points.length < 2) return "";
+
+    const values = points.map((p) => p.price).sort((a, b) => a - b);
+    const min = values[0];
+    const max = values[values.length - 1];
+    const range = Math.max(max - min, 0.0001);
+    // Floor the scale a bit below the cheapest hour so its bar still draws a
+    // visible sliver instead of vanishing at zero height.
+    const scaleMin = min - range * 0.08;
+    const scaleRange = Math.max(max - scaleMin, 0.0001);
+
+    const bandStart = Number(attrs.price_forecast_band_start);
+    const bandFull = Number(attrs.price_forecast_band_full);
+    let lowMax, highMin;
+    if (Number.isFinite(bandStart) && Number.isFinite(bandFull) && bandFull > bandStart) {
+      lowMax = bandStart;
+      highMin = bandFull;
+    } else {
+      lowMax = values[Math.floor(values.length * 0.25)];
+      highMin = values[Math.floor(values.length * 0.75)];
+    }
+    // Absolute (not day-relative) colour scale so a given price always reads
+    // the same regardless of that day's own spread: blue near 0 through
+    // green/yellow/red up to purple around 3 (currency/kWh).
+    const priceColor = (v) => this._priceColor(v);
+
+    const width = 600;
+    const height = 90;
+    const t0 = points[0].time;
+    const tEnd = points[points.length - 1].time;
+    // Slot width comes from the gap to the next point; the last slot borrows
+    // the previous gap since there is no point after it to measure against.
+    const lastStep = points[points.length - 1].time - points[points.length - 2].time;
+    const span = Math.max(tEnd - t0 + lastStep, 1);
+    const x = (time) => ((time - t0) / span) * width;
+    const y = (v) => height - ((v - scaleMin) / scaleRange) * height;
+
+    const bars = points
+      .map((p, i) => {
+        const nextTime = i < points.length - 1 ? points[i + 1].time : p.time + lastStep;
+        const barX = x(p.time);
+        const barW = Math.max(x(nextTime) - barX, 0);
+        const barY = y(p.price);
+        return `<rect class="co-pg-bar" style="fill:${priceColor(p.price)}" x="${barX.toFixed(1)}" y="${barY.toFixed(1)}" width="${Math.max(barW - 1, 0).toFixed(1)}" height="${Math.max(height - barY, 0).toFixed(1)}"><title>${this._esc(this._fmtDateTime(new Date(p.time).toISOString()))}: ${this._esc(this._num(p.price, 2))}</title></rect>`;
+      })
+      .join("");
+
+    const now = Date.now();
+    const nowLine =
+      now >= t0 && now <= tEnd
+        ? `<line class="co-pg-now" x1="${x(now).toFixed(1)}" x2="${x(now).toFixed(1)}" y1="0" y2="${height}"></line>`
+        : "";
+
+    return `
+      <div class="co-section">${this._esc(t.sectionPriceGraph)}</div>
+      <div class="co-pricegraph"${this._tooltip(t, "explainPriceGraph")}>
+        <svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none">${bars}${nowLine}</svg>
+      </div>
+      <div class="co-pg-legend">
+        <span class="co-pg-swatch" style="background:${priceColor(lowMax / 2)}"></span>${this._esc(t.legendPriceLow)} (&lt; ${this._esc(this._num(lowMax, 2))})
+        <span class="co-pg-swatch" style="background:${priceColor((lowMax + highMin) / 2)}"></span>${this._esc(t.legendPriceMid)} (${this._esc(this._num(lowMax, 2))}–${this._esc(this._num(highMin, 2))})
+        <span class="co-pg-swatch" style="background:${priceColor(Math.max(highMin, (highMin + 3) / 2))}"></span>${this._esc(t.legendPriceHigh)} (&ge; ${this._esc(this._num(highMin, 2))})
+      </div>`;
+  }
+
+  // Continuous colour scale for the price graph: blue at 0 -> green -> yellow
+  // -> red -> purple at ~3 (currency/kWh), interpolated linearly per segment.
+  _priceColor(v) {
+    const stops = [
+      [0, [33, 150, 243]], // blue
+      [0.75, [76, 175, 80]], // green
+      [1.5, [255, 235, 59]], // yellow
+      [2.25, [244, 67, 54]], // red
+      [3, [156, 39, 176]], // purple
+    ];
+    const clamped = Math.min(Math.max(Number(v) || 0, 0), 3);
+    for (let i = 0; i < stops.length - 1; i++) {
+      const [v0, c0] = stops[i];
+      const [v1, c1] = stops[i + 1];
+      if (clamped <= v1) {
+        const f = (clamped - v0) / (v1 - v0);
+        const r = Math.round(c0[0] + (c1[0] - c0[0]) * f);
+        const g = Math.round(c0[1] + (c1[1] - c0[1]) * f);
+        const b = Math.round(c0[2] + (c1[2] - c0[2]) * f);
+        return `rgb(${r},${g},${b})`;
+      }
+    }
+    return `rgb(${stops[stops.length - 1][1].join(",")})`;
+  }
+
   _render() {
     if (!this._hass || !this._entities) return;
 
@@ -568,6 +676,7 @@ class TrueTempCard extends HTMLElement {
       (climate && climate.attributes.friendly_name) || "TrueTemp";
     const showBands = this._config.bands !== false;
     const showPrice = this._config.price !== false;
+    const showPriceGraph = this._config.priceGraph !== false;
     const showSources = this._config.sources !== false;
 
     this.innerHTML = `
@@ -586,6 +695,8 @@ class TrueTempCard extends HTMLElement {
 
           <div class="co-section">${this._esc(t.sectionPrice)}${showPrice && priceDisabled ? ` <span class="co-badge">${this._esc(t.badgeDisabled)}</span>` : ""}</div>
           <div class="co-grid${showPrice ? "" : " co-grid-compact"}">${this._cells(showPrice ? [...priceAlways, ...price] : priceAlways, t)}</div>
+
+          ${showPriceGraph ? this._priceGraph(attrs, t) : ""}
 
           <div class="co-section">${this._esc(t.sectionHouseKnowledge)}</div>
           <div class="co-bar-group">
@@ -659,6 +770,11 @@ class TrueTempCard extends HTMLElement {
         .co-chip.co-good b { color: var(--success-color, #4c1); }
         .co-chip.co-bad b { color: var(--error-color, #d33); }
         .co-chip.co-off b { color: var(--disabled-text-color, #999); font-weight:400; font-style:italic; }
+        .co-pricegraph svg { width:100%; height:70px; display:block; }
+        .co-pg-now { stroke: var(--primary-text-color); stroke-width:1.5; stroke-dasharray:3,2; }
+        .co-pg-legend { display:flex; align-items:center; gap:6px; margin-top:6px; font-size:11px; color: var(--secondary-text-color); }
+        .co-pg-swatch { width:9px; height:9px; border-radius:2px; display:inline-block; margin-left:8px; }
+        .co-pg-swatch:first-child { margin-left:0; }
         .co-notes { margin-top:14px; font-size:12px; line-height:1.5; color: var(--primary-text-color);
                     border-left:3px solid var(--warning-color, #fa3); padding-left:10px; }
         .co-reason { margin-top:14px; font-size:11px; line-height:1.5; color: var(--secondary-text-color); }
@@ -674,6 +790,7 @@ const EDITOR_SCHEMA = [
   { name: "entity", required: true, selector: { entity: { domain: "sensor", integration: "truetemp" } } },
   { name: "bands", selector: { boolean: {} } },
   { name: "price", selector: { boolean: {} } },
+  { name: "priceGraph", selector: { boolean: {} } },
   { name: "sources", selector: { boolean: {} } },
 ];
 
@@ -682,7 +799,7 @@ const EDITOR_SCHEMA = [
 // worse copy of what HA already renders for every other card.
 class TrueTempCardEditor extends HTMLElement {
   setConfig(config) {
-    this._config = { bands: true, price: true, sources: true, ...config };
+    this._config = { bands: true, price: true, priceGraph: true, sources: true, ...config };
     this._render();
   }
 
@@ -698,6 +815,7 @@ class TrueTempCardEditor extends HTMLElement {
       entity: t.editorEntity,
       bands: t.editorBands,
       price: t.editorPrice,
+      priceGraph: t.editorPriceGraph,
       sources: t.editorSources,
     };
     if (!this._form) {

@@ -6,9 +6,9 @@ data_logger.py keeps its `homeassistant.core.HomeAssistant` import behind
 `TYPE_CHECKING` specifically so this works, the same trick rc_store.py/
 rc_model.py use.
 
-Only `_append_line`/`_rotate`/`MAX_LOG_BYTES` are exercised here — the
-async wrapper (`async_log_record`) needs a real `hass` executor and is out
-of scope for an offline test.
+Only `_append_line`/`_rotate`/`MAX_LOG_BYTES`/`_read_recent` are exercised
+here — the async wrappers (`async_log_record`/`async_read_recent_records`)
+need a real `hass` executor and are out of scope for an offline test.
 """
 
 from __future__ import annotations
@@ -17,6 +17,7 @@ import gzip
 import importlib.util
 import json
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 _CC = (
@@ -109,6 +110,74 @@ def test_rotation_preserves_original_content_and_removes_source(tmp_path):
     assert len(rotated) == 1
     with gzip.open(rotated[0], "rt", encoding="utf-8") as handle:
         assert handle.read() == "line1\nline2\n"
+
+
+def _ts(days_ago: float) -> str:
+    return (datetime.now(timezone.utc) - timedelta(days=days_ago)).isoformat()
+
+
+def test_read_recent_filters_to_window_from_live_file(tmp_path):
+    path = tmp_path / "entry.jsonl"
+    lines = [
+        json.dumps({"ts": _ts(5), "v": "too_old"}),
+        json.dumps({"ts": _ts(1), "v": "in_window"}),
+        json.dumps({"ts": _ts(0.1), "v": "newest"}),
+    ]
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    records = data_logger._read_recent(path, days=3)
+
+    assert [r["v"] for r in records] == ["in_window", "newest"]
+
+
+def test_read_recent_skips_malformed_lines(tmp_path):
+    path = tmp_path / "entry.jsonl"
+    path.write_text(
+        json.dumps({"ts": _ts(0.1), "v": "good"}) + "\nnot json\n",
+        encoding="utf-8",
+    )
+
+    records = data_logger._read_recent(path, days=3)
+
+    assert [r["v"] for r in records] == ["good"]
+
+
+def test_read_recent_missing_file_returns_empty(tmp_path):
+    path = tmp_path / "entry.jsonl"
+    assert data_logger._read_recent(path, days=3) == []
+
+
+def test_read_recent_pulls_from_rotated_file_when_live_file_too_short(tmp_path):
+    path = tmp_path / "entry.jsonl"
+    with gzip.open(
+        tmp_path / "entry.20260101T000000Z.jsonl.gz", "wt", encoding="utf-8"
+    ) as handle:
+        handle.write(json.dumps({"ts": _ts(1), "v": "rotated"}) + "\n")
+    path.write_text(json.dumps({"ts": _ts(0.1), "v": "live"}) + "\n", encoding="utf-8")
+
+    records = data_logger._read_recent(path, days=3)
+
+    assert [r["v"] for r in records] == ["rotated", "live"]
+
+
+def test_read_recent_stops_once_window_is_covered(tmp_path):
+    path = tmp_path / "entry.jsonl"
+    # This rotation is entirely outside the 3-day window and should never be
+    # opened, since the live file's oldest record already reaches past the
+    # cutoff on its own.
+    with gzip.open(
+        tmp_path / "entry.20260101T000000Z.jsonl.gz", "wt", encoding="utf-8"
+    ) as handle:
+        handle.write("not json - would raise if ever parsed\n")
+    lines = [
+        json.dumps({"ts": _ts(3.5), "v": "before_window"}),
+        json.dumps({"ts": _ts(0.1), "v": "live"}),
+    ]
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    records = data_logger._read_recent(path, days=3)
+
+    assert [r["v"] for r in records] == ["live"]
 
 
 def test_log_file_path_unaffected_by_rotation_change():

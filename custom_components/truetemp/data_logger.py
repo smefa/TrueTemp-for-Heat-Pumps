@@ -28,7 +28,7 @@ import gzip
 import json
 import logging
 import shutil
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -113,3 +113,58 @@ async def async_log_record(
         await hass.async_add_executor_job(_append_line, path, line)
     except Exception as err:  # noqa: BLE001 - logging must never break output
         _LOGGER.warning("Could not write TrueTemp data log %s: %s", path, err)
+
+
+def _parse_jsonl(text: str) -> list[dict[str, Any]]:
+    """Parse JSONL text, silently dropping any line that isn't valid JSON.
+
+    A truncated final line is possible if a rotation or process kill lands
+    mid-write; skipping it is preferable to failing the whole read.
+    """
+    records = []
+    for line in text.splitlines():
+        if not line:
+            continue
+        try:
+            records.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return records
+
+
+def _read_recent(path: Path, days: int) -> list[dict[str, Any]]:
+    """Blocking read of the last `days` of records, oldest first.
+
+    Reads the live file first, then walks backward through rotated `.gz`
+    siblings (newest rotation first, matching `_rotate`'s naming) only until
+    the window is covered — a rotation just past the cutoff need not be
+    opened. Only ever call via the executor, same as `_append_line`.
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    records: list[dict[str, Any]] = []
+    if path.exists():
+        records = _parse_jsonl(path.read_text(encoding="utf-8"))
+
+    rotated = sorted(
+        path.parent.glob(f"{path.stem}.*{path.suffix}.gz"), reverse=True
+    )
+    for rotated_path in rotated:
+        if records and datetime.fromisoformat(records[0]["ts"]) <= cutoff:
+            break
+        with gzip.open(rotated_path, "rt", encoding="utf-8") as handle:
+            records = _parse_jsonl(handle.read()) + records
+
+    return [r for r in records if datetime.fromisoformat(r["ts"]) >= cutoff]
+
+
+async def async_read_recent_records(
+    hass: HomeAssistant, entry_id: str, days: int
+) -> list[dict[str, Any]]:
+    """Return this entry's logged records from the last `days`, oldest first.
+
+    Empty if data logging was never enabled (no file) or has no records
+    inside the window yet. Used by diagnostics to attach a trend window
+    without requiring a separate replay session.
+    """
+    path = log_file_path(hass, entry_id)
+    return await hass.async_add_executor_job(_read_recent, path, days)
