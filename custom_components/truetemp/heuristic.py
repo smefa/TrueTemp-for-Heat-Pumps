@@ -92,7 +92,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from math import radians, sin
+from math import cos, radians, sin
 
 MODEL_VERSION = "compose_v2"
 
@@ -105,7 +105,7 @@ OUTPUT_SANITY_MAX_C = 25.0
 # Feedforward gains for the two optional weather inputs. See the module
 # docstring for why these are constants rather than configuration or learned
 # parameters. Units: degC of outdoor spoof per unit of input.
-SOLAR_GAIN_C = 3.0
+SOLAR_GAIN_C = 4.0
 WIND_GAIN_C_PER_MS = 0.3
 # Below this the wind term is a breeze, not a draught: contributes exactly 0
 # rather than a tiny, mostly-noise correction. The gain applies to the speed
@@ -123,7 +123,7 @@ PRICE_BRAKING_EPS_C = 0.05
 # the terms are additive in physics — but two simultaneous overshoots are
 # still one overshoot too many for the learner to unwind afterwards. 3.0 sits
 # below learner.MAX_AUTHORITY_C (5.0) and PRICE_CATCHUP_MAX_C (6.0), and
-# equals the largest single steady-state feedforward term (SOLAR_GAIN_C).
+# below the largest single steady-state feedforward term (SOLAR_GAIN_C).
 WEATHER_PRERAMP_MAX_C = 3.0
 # Below this the ramp is noise: not reported, and does not freeze the learner.
 # Deliberately looser than PRICE_BRAKING_EPS_C — a pre-ramp fires far more
@@ -199,19 +199,52 @@ def resolve_heating_hard_limit_engaged(
 
 
 def solar_effect_of(sun_elevation_deg: float, cloud_coverage_pct: float | None) -> float:
-    """Fraction (0..1) of full solar gain available right now.
+    """Fraction of full solar gain available right now, through a fixed
+    south-facing vertical window (no per-house orientation input; south is
+    the assumed case this input is meant for).
 
-    Pure geometry and weather, no occupant preference in it: zero at or below
-    the horizon, scaling up with sun height and clear sky above it. Missing
-    cloud data is treated as clear (`cloud_coverage_pct` is None -> 0%
-    coverage), the same "assume clear" behaviour `compute()` already reported
-    in its reason string. Extracted as a named function, rather than left
-    inline in `compute()`, so the coordinator can reuse this exact formula —
-    e.g. to solar-correct the baseline learner's samples — without a second
-    copy that could drift out of sync.
+    Geometry is `cos(elevation)`, not `sin(elevation)`: a vertical pane is lit
+    best by low, streaming-in sun, not by sun overhead, so gain falls to zero
+    as the sun approaches zenith rather than at the horizon. Zero true azimuth
+    tracking means this overcredits mornings/evenings when the sun is well
+    off due south — accepted, because that error is concentrated in summer
+    (wide azimuth swing, long days), when heating is barely running and the
+    term barely matters.
+
+    Multiplied by an atmospheric transmittance term, `0.7^(air_mass^0.678)`,
+    air mass being `1/sin(elevation)`: low sun travels through much more
+    atmosphere, which cuts the other way from the geometry term and keeps the
+    horizon from reading as full-strength. Net effect versus the old
+    `sin(elevation)` shape: winter and shoulder-season sun score much higher
+    relative to summer, since the geometry term now rewards exactly the low
+    sun angles the atmosphere term discounts, rather than both terms
+    discounting low sun the same way. The peak, therefore, lands at a modest
+    elevation (roughly 30-35°) rather than at zenith, and never approaches
+    1.0 — a fixed vertical pane never gets the full extraterrestrial dose the
+    old shape treated as achievable. `SOLAR_GAIN_C` was calibrated against
+    the old, larger-peaking shape and needs a fresh fit against this one.
+
+    Cloud discount is `1 - 0.75 * cloud_fraction^3.4`, not linear: partly
+    cloudy skies stay close to full brightness (diffuse light dominates well
+    before overcast), and full overcast still passes about a quarter of clear
+    sky rather than zero. Missing cloud data is treated as clear
+    (`cloud_coverage_pct` is None -> 0% coverage), the same "assume clear"
+    behaviour `compute()` already reported in its reason string.
+
+    Extracted as a named function, rather than left inline in `compute()`, so
+    the coordinator can reuse this exact formula — e.g. to solar-correct the
+    baseline learner's samples — without a second copy that could drift out
+    of sync.
     """
+    if sun_elevation_deg <= 0.0:
+        return 0.0
+    elevation_rad = radians(sun_elevation_deg)
+    air_mass = 1.0 / sin(elevation_rad)
+    transmittance = 0.7 ** (air_mass**0.678)
+    aperture_factor = cos(elevation_rad) * transmittance
     cloud_fraction = (cloud_coverage_pct or 0.0) / 100.0
-    return max(0.0, sin(radians(sun_elevation_deg))) * (1.0 - cloud_fraction)
+    cloud_factor = 1.0 - 0.75 * cloud_fraction**3.4
+    return aperture_factor * cloud_factor
 
 
 # --- Price comfort tiers ---------------------------------------------------
