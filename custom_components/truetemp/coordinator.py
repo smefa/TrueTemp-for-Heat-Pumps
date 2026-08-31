@@ -676,7 +676,11 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
         if ok or self.in_startup_grace_period():
             ir.async_delete_issue(self.hass, DOMAIN, issue_id)
             return
-        joined = ", ".join(sorted(entity_id)) if isinstance(entity_id, frozenset) else (entity_id or "")
+        joined = (
+            ", ".join(sorted(entity_id))
+            if isinstance(entity_id, frozenset)
+            else (entity_id or "")
+        )
         ir.async_create_issue(
             self.hass,
             DOMAIN,
