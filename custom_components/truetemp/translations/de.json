@@ -7,6 +7,8 @@
         "data": {
           "name": "Name",
           "indoor_temp_sensor": "Innentemperatursensor",
+          "indoor_temp_sensors_extra": "Zusätzliche Innensensoren",
+          "indoor_aggregation": "Wie mehrere Sensoren kombiniert werden",
           "outdoor_temp_sensor": "Außentemperatursensor",
           "weather_entity": "Wettervorhersage",
           "nordpool_price_entity": "Strompreis",
@@ -14,7 +16,9 @@
           "heating_type": "Wie die Wärme in den Raum gelangt"
         },
         "data_description": {
-          "indoor_temp_sensor": "Wähle einen Sensor in einem Raum, in dem du dich wirklich aufhältst, fern von direkter Sonne und Zugluft. Alles wird aus diesem Messwert gelernt — eine Abstellkammer oder ein Keller würden dem System das falsche Haus beibringen.",
+          "indoor_temp_sensor": "Wähle einen Sensor in einem Raum, in dem du dich wirklich aufhältst, fern von direkter Sonne und Zugluft. Dies wird der primäre Sensor der Zone — seine Identität, und, falls unten weitere Sensoren hinzugefügt werden, das einzige Mitglied des Durchschnitts, das nie ausfällt. Alles wird aus dem kombinierten Messwert gelernt — eine Abstellkammer oder ein Keller würden dem System das falsche Haus beibringen.",
+          "indoor_temp_sensors_extra": "Optional, bis zu vier weitere. Werden mit dem obigen Sensor über den Modus unten kombiniert — nützlich für ein Haus, in dem ein Raum durchgehend kälter ist als der Rest, oder um zu verhindern, dass Ausreißer eines einzelnen Sensors als echte Temperaturänderung gelesen werden.",
+          "indoor_aggregation": "Durchschnitt bildet den Mittelwert aller meldenden Sensoren. Niedrigster heizt auf den kältesten Raum — das Haus pendelt sich mit jedem anderen Raum über dem Ziel ein, und die Preisersparnis-Untergrenze schützt dann diesen kältesten statt des durchschnittlichen Raums. Wirkt sich erst aus, sobald oben zusätzliche Sensoren hinzugefügt wurden.",
           "outdoor_temp_sensor": "Ein echter Außensensor, falls vorhanden — er ist meist genauer als die Schätzung eines Wetterdienstes.",
           "weather_entity": "Optional. Wird für die Sonnen- und Windvorhersage genutzt. Kann später hinzugefügt oder geändert werden.",
           "nordpool_price_entity": "Optional. Ein Nordpool-Sensor mit den stündlichen Preisen für heute und morgen, nötig um Stromkosten zu sparen. Kann später hinzugefügt oder geändert werden.",
@@ -28,6 +32,8 @@
         "data": {
           "name": "Name",
           "indoor_temp_sensor": "Innentemperatursensor",
+          "indoor_temp_sensors_extra": "Zusätzliche Innensensoren",
+          "indoor_aggregation": "Wie mehrere Sensoren kombiniert werden",
           "outdoor_temp_sensor": "Außentemperatursensor",
           "weather_entity": "Wettervorhersage",
           "nordpool_price_entity": "Strompreis",
@@ -46,6 +52,9 @@
       "cannot_connect": "Diese Adresse konnte nicht erreicht werden. Prüfe Name oder IP-Adresse und ob das Gerät eingeschaltet und im selben Netzwerk ist.",
       "invalid_host": "Das ist kein reiner Hostname oder eine IP-Adresse — entferne Schema, Pfad oder Query-String.",
       "already_configured": "Dieser Innensensor wird bereits von einer anderen TrueTemp-Zone verwendet.",
+      "indoor_extra_duplicates_primary": "Ein zusätzlicher Sensor darf nicht mit dem Innensensor oben übereinstimmen.",
+      "indoor_extra_too_many": "Es sind nur vier zusätzliche Innensensoren erlaubt.",
+      "indoor_extra_is_other_primary": "Dieser Sensor ist bereits der Innensensor einer anderen TrueTemp-Zone.",
       "vacation_window_invalid": "Das Enddatum muss nach dem Startdatum liegen.",
       "vacation_date_invalid": "Das ist kein gültiges Datum.",
       "vacation_overlap": "Das Zeitfenster dieses Plans überschneidet sich mit einem anderen aktivierten Plan. Passe die Daten oder Uhrzeiten an oder deaktiviere einen davon."
@@ -67,12 +76,16 @@
         "description": "Beim Ändern des Innensensors beginnt das Lernen für den neuen Raum von vorne.",
         "data": {
           "indoor_temp_sensor": "Innentemperatursensor",
+          "indoor_temp_sensors_extra": "Zusätzliche Innensensoren",
+          "indoor_aggregation": "Wie mehrere Sensoren kombiniert werden",
           "outdoor_temp_sensor": "Außentemperatursensor",
           "heating_type": "Wie die Wärme in den Raum gelangt",
           "enable_data_logging": "Detailliertes lokales Protokoll führen"
         },
         "data_description": {
-          "indoor_temp_sensor": "Wähle einen Sensor in einem Raum, in dem du dich wirklich aufhältst, fern von direkter Sonne und Zugluft. Alles wird aus diesem Messwert gelernt — eine Abstellkammer oder ein Keller würden dem System das falsche Haus beibringen.",
+          "indoor_temp_sensor": "Wähle einen Sensor in einem Raum, in dem du dich wirklich aufhältst, fern von direkter Sonne und Zugluft. Das ist der primäre Sensor der Zone — seine Identität, und, falls unten weitere Sensoren gesetzt werden, das einzige Mitglied des Durchschnitts, das nie ausfällt. Alles wird aus dem kombinierten Messwert gelernt — eine Abstellkammer oder ein Keller würden dem System das falsche Haus beibringen.",
+          "indoor_temp_sensors_extra": "Optional, bis zu vier weitere. Werden mit dem obigen Sensor über den Modus unten kombiniert — nützlich für ein Haus, in dem ein Raum durchgehend kälter ist als der Rest, oder um zu verhindern, dass Ausreißer eines einzelnen Sensors als echte Temperaturänderung gelesen werden.",
+          "indoor_aggregation": "Durchschnitt bildet den Mittelwert aller meldenden Sensoren. Niedrigster heizt auf den kältesten Raum — das Haus pendelt sich mit jedem anderen Raum über dem Ziel ein, und die Preisersparnis-Untergrenze schützt dann diesen kältesten statt des durchschnittlichen Raums. Wirkt sich erst aus, sobald oben zusätzliche Sensoren hinzugefügt wurden.",
           "outdoor_temp_sensor": "Ein echter Außensensor, falls vorhanden — er ist meist genauer als die Schätzung eines Wetterdienstes.",
           "heating_type": "Wird nur für die ersten Tage genutzt. Danach hat TrueTemp gemessen, wie schnell dein Haus reagiert, und verlässt sich nicht mehr auf diese Angabe.",
           "enable_data_logging": "Schreibt pro Zyklus eine Zeile in eine Datei in deinem Konfigurationsordner. Es verlässt nichts deinen Rechner. Nützlich, um zu prüfen, wie gut das System funktioniert hat."
@@ -91,7 +104,7 @@
         "data_description": {
           "weather_entity": "Wird nur für die Sonnen- und Windvorhersage genutzt. Nicht nötig, wenn beides unten ausgeschaltet ist.",
           "nordpool_price_entity": "Ein Nordpool-Sensor mit den stündlichen Preisen für heute und morgen. Ohne ihn bewirkt die Preisersparnis nichts.",
-          "enable_solar_input": "Reduziert die Heizleistung etwas, wenn die Sonne das Haus aufwärmt. Nur einschalten, wenn dein Innensensor an einer Stelle sitzt, die die Sonne tatsächlich erreicht. Ein Sensor im Keller, in einem nach Norden ausgerichteten Raum oder im Flur bekommt den solaren Wärmegewinn nie mit — das würde die Temperatur für eine Erwärmung senken, die dein Sensor nicht bestätigen kann.",
+          "enable_solar_input": "Reduziert die Heizleistung etwas, wenn die Sonne das Haus aufwärmt. Nur einschalten, wenn dein Innensensor — oder, bei mehr als einem konfigurierten, ihr kombinierter Messwert — an einer Stelle sitzt, die die Sonne tatsächlich erreicht. Ein Sensor im Keller, in einem nach Norden ausgerichteten Raum oder im Flur bekommt den solaren Wärmegewinn nie mit — das würde die Temperatur für eine Erwärmung senken, die nichts, was du misst, bestätigen kann.",
           "enable_wind_input": "Erhöht die Heizleistung etwas, wenn Wind dem Haus Wärme entzieht. Lass dies ausgeschaltet, außer du hast ein älteres, zugiges Haus, bei dem du bei starkem Wind spürbar auskühlende Räume bemerkst. Ein einigermaßen gut abgedichtetes Haus reagiert kaum auf Wind, und ein Ausgleich für einen nicht vorhandenen Effekt fügt nur Störrauschen hinzu.",
           "enable_weather_lookahead": "Heizt schon etwas stärker, bevor eine Kaltfront oder auffrischender Wind tatsächlich eintrifft, statt zu warten, bis das Haus ausgekühlt ist. Bei Sonne ist es umgekehrt: Die Wärme wird zurückgehalten, bevor ein Schub Sonnenschein eintrifft, damit das Haus nicht überhitzt, sobald die Sonnenwärme selbst ankommt. Jeder Effekt klingt ab, sobald seine Änderung eintritt. Benötigt die Wettervorhersage-Entität oben."
         }
@@ -317,6 +330,12 @@
         "mixed": "Heizkörper und Fußbodenheizung"
       }
     },
+    "indoor_aggregation": {
+      "options": {
+        "average": "Durchschnitt",
+        "lowest": "Niedrigster (kältester Raum)"
+      }
+    },
     "output_mode": {
       "options": {
         "outdoor_temp_spoof": "Außentemperatur oder OhmOnWIFI",
@@ -331,8 +350,16 @@
       "description": "{entity_id} ist nicht erreichbar oder liefert keinen Zahlenwert, daher kann TrueTemp keinen kompensierten Wert veröffentlichen. Es wird weiter versucht; diese Meldung verschwindet von selbst, sobald der Sensor wieder lesbar ist."
     },
     "indoor_sensor_unavailable": {
-      "title": "TrueTemp ({name}) hat den Innensensor verloren",
-      "description": "{entity_id} ist nicht erreichbar oder liefert keinen Zahlenwert. TrueTemp hält den gelernten Offset und pausiert das Lernen, bis er zurückkommt — sonst ist nichts betroffen."
+      "title": "TrueTemp ({name}) hat die Innenmessung verloren",
+      "description": "Keiner der {total} eingerichteten Innensensoren liefert einen Wert ({entity_id}). TrueTemp hält den gelernten Offset und pausiert das Lernen, bis mindestens einer zurückkommt — sonst ist nichts betroffen."
+    },
+    "indoor_sensor_partial": {
+      "title": "TrueTemp ({name}) fehlen einige Innensensoren",
+      "description": "Nur {count} von {total} eingerichteten Innensensoren liefern einen Wert — {entity_id} nicht. TrueTemp regelt normal mit den verbleibenden Sensoren weiter; dies verschwindet von selbst, sobald sie zurückkommen."
+    },
+    "indoor_sensor_missing": {
+      "title": "TrueTemp ({name}) findet einen eingerichteten Innensensor nicht",
+      "description": "{entity_id} existiert nicht mehr in Home Assistant — er wurde umbenannt oder seine Integration wurde entfernt. TrueTemp läuft mit den übrigen eingerichteten Sensoren weiter, aber dies muss in den Zoneneinstellungen korrigiert werden; es verschwindet nicht von selbst."
     },
     "wind_forecast_unavailable": {
       "title": "TrueTemp ({name}) hat die Windvorhersage verloren",

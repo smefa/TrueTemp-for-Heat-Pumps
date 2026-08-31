@@ -31,6 +31,10 @@ skruva på.
   expertkunskap krävs.
 - 🎯 **Ger temperaturen du bett om**, även när värmepumpens egen kurva
   inte gör det.
+- 🏠 **Läser av mer än ett rum** (valfritt) — kombinera upp till fem givare,
+  antingen som medelvärde för att jämna ut en enskild givares brus, eller
+  inställt på att styra efter det kallaste rummet så att det inte gömmer sig
+  bakom ett varmt genomsnitt.
 - 🔒 **Säkert som standard** — installeras i ett rent "titta men inte röra"-
   läge och visar vad den *skulle* göra innan den gör något alls. Stäng av den
   när du vill, så kör pumpen precis som förut.
@@ -63,6 +67,8 @@ bestämma vilken temperatur pumpen ska tro att det är ute. Har du en äldre
 pump utan egen smart funktion är det här enklaste sättet att göra den
 styrbar — och TrueTemp kan prata direkt med enheten, utan någon
 extra ihopkoppling.
+
+OBS! Vissa pumpar KAN vara känsliga för att inställningar som skrivs "nöter ut" minnet. Vi skriver så få uppdateringar som möjligt men det kan vara värt att notera. En OhmOnWifi har inte det problemet.
 
 ---
 
@@ -112,6 +118,9 @@ Du får svara på fyra enkla frågor:
   en plats i direkt solljus eller ett dragigt hörn — det är den här
   avläsningen allt annat lärs utifrån.
   Glöm inte att öppna alla termostater i rummet med givaren fullt.
+  Du kan lägga till upp till fyra extra givare direkt här (eller senare i
+  inställningarna) och välja om TrueTemp ska räkna medelvärde eller styra
+  efter det kallaste rummet.
 - **Vilken utegivare ska användas?** Din egen sensor om du har en, annars
   fungerar en väderleksrapport ok.
 - **Vilken temperatur vill du ha inomhus?**
@@ -132,6 +141,8 @@ konsekvenser.
 
 Allt nedan är valfritt och kan hoppas över helt:
 
+- **Extra innegivare** — kombinera upp till fyra till med den ovan, antingen
+  som medelvärde eller inställt på att styra efter det kallaste rummet.
 - **Kompensering för sol och vind** — för hus där det här faktiskt
   påverkar rummet du mäter i.
 - **Agera på väderprognosen** — börjar värma lite hårdare innan en kallfront

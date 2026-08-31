@@ -434,6 +434,12 @@ class StatusSensor(TrueTempEntity, SensorEntity):
         }
         if result is not None:
             attrs["indoor_sensor_ok"] = result.indoor_data_available
+            attrs["indoor_sensor_count"] = {
+                "usable": len(self.coordinator.indoor_sensor_readings),
+                "configured": self.coordinator.indoor_sensor_total_configured,
+            }
+            attrs["indoor_sensor_readings"] = dict(self.coordinator.indoor_sensor_readings)
+            attrs["indoor_aggregation_mode"] = self.coordinator.indoor_aggregation_mode
             if self.coordinator.wind_input_enabled:
                 attrs["wind_forecast_ok"] = result.wind_data_available
             if self.coordinator.solar_input_enabled:

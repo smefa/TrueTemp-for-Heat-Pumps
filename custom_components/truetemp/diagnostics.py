@@ -124,6 +124,17 @@ async def async_get_config_entry_diagnostics(
             "data_logging_enabled": coordinator.data_logging_enabled,
         },
         "output": asdict(result) if result is not None else None,
+        # Per-sensor spread behind `output.indoor_temp_c` — see
+        # docs/plan_multi_indoor_sensor.md §2.6. `readings` only ever holds
+        # entity ids that were usable last cycle; anything configured but
+        # missing/unavailable is absent here and shows up instead in the
+        # zone's active Repairs issues.
+        "indoor_sensors": {
+            "mode": coordinator.indoor_aggregation_mode,
+            "usable": len(coordinator.indoor_sensor_readings),
+            "configured": coordinator.indoor_sensor_total_configured,
+            "readings": dict(coordinator.indoor_sensor_readings),
+        },
         "learner": {
             "latest": asdict(learner) if learner is not None else None,
             "total_samples": coordinator.learner_state.total_samples,

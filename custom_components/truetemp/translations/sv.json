@@ -7,6 +7,8 @@
         "data": {
           "name": "Namn",
           "indoor_temp_sensor": "Inomhustemperaturgivare",
+          "indoor_temp_sensors_extra": "Extra inomhusgivare",
+          "indoor_aggregation": "Hur flera givare kombineras",
           "outdoor_temp_sensor": "Utomhustemperaturgivare",
           "weather_entity": "Väderprognos",
           "nordpool_price_entity": "Elpris",
@@ -14,7 +16,9 @@
           "heating_type": "Hur värmen kommer in i rummet"
         },
         "data_description": {
-          "indoor_temp_sensor": "Välj en givare i ett rum du faktiskt vistas i, undan direkt sol och drag. Allt lärs in från denna avläsning, så ett skafferi eller en källare lär den fel hus.",
+          "indoor_temp_sensor": "Välj en givare i ett rum du faktiskt vistas i, undan direkt sol och drag. Den blir zonens primära givare — dess identitet, och, om extra givare läggs till nedan, den enda medlemmen i genomsnittet som aldrig faller bort. Allt lärs in från den kombinerade avläsningen, så ett skafferi eller en källare lär den fel hus.",
+          "indoor_temp_sensors_extra": "Valfritt, upp till fyra till. Kombineras med givaren ovan med hjälp av läget nedan — användbart för ett hus där ett rum genomgående är kallare än resten, eller för att förhindra att en enskild givares störningar tolkas som en verklig temperaturändring.",
+          "indoor_aggregation": "Genomsnitt tar medelvärdet av alla givare som rapporterar. Lägst värmer till det kallaste rummet — huset lägger sig med varje annat rum över målet, och prisbesparingens golv skyddar då det kallaste rummet i stället för det genomsnittliga. Spelar bara roll när extra givare har lagts till ovan.",
           "outdoor_temp_sensor": "En riktig utomhusgivare om du har en — den är oftast mer exakt än en väderleksuppskattning.",
           "weather_entity": "Valfritt. Används för sol- och vindprognosen. Du kan lägga till eller ändra detta senare.",
           "nordpool_price_entity": "Valfritt. En Nordpool-givare med dagens och morgondagens timpriser, behövs för att spara pengar på el. Du kan lägga till eller ändra detta senare.",
@@ -28,6 +32,8 @@
         "data": {
           "name": "Namn",
           "indoor_temp_sensor": "Inomhustemperaturgivare",
+          "indoor_temp_sensors_extra": "Extra inomhusgivare",
+          "indoor_aggregation": "Hur flera givare kombineras",
           "outdoor_temp_sensor": "Utomhustemperaturgivare",
           "weather_entity": "Väderprognos",
           "nordpool_price_entity": "Elpris",
@@ -46,6 +52,9 @@
       "cannot_connect": "Kunde inte nå den adressen. Kontrollera namnet eller IP-adressen, och att enheten är påslagen och på samma nätverk.",
       "invalid_host": "Det där är inte ett rent värdnamn eller en IP-adress — ta bort eventuellt schema, sökväg eller frågesträng.",
       "already_configured": "Den inomhusgivaren används redan av en annan TrueTemp-zon.",
+      "indoor_extra_duplicates_primary": "En extra givare kan inte vara samma som inomhusgivaren ovan.",
+      "indoor_extra_too_many": "Endast fyra extra inomhusgivare är tillåtna.",
+      "indoor_extra_is_other_primary": "Den givaren är redan en annan TrueTemp-zons inomhusgivare.",
       "vacation_window_invalid": "Slutdatumet måste vara efter startdatumet.",
       "vacation_date_invalid": "Det är inget riktigt datum.",
       "vacation_overlap": "Den här planens tidsfönster överlappar en annan aktiverad plan. Justera datumen eller tiderna, eller inaktivera en av dem."
@@ -67,12 +76,16 @@
         "description": "Att byta inomhusgivare innebär att inlärningen börjar om för det nya rummet.",
         "data": {
           "indoor_temp_sensor": "Inomhustemperaturgivare",
+          "indoor_temp_sensors_extra": "Extra inomhusgivare",
+          "indoor_aggregation": "Hur flera givare kombineras",
           "outdoor_temp_sensor": "Utomhustemperaturgivare",
           "heating_type": "Hur värmen kommer in i rummet",
           "enable_data_logging": "Håll en detaljerad lokal logg"
         },
         "data_description": {
-          "indoor_temp_sensor": "Välj en givare i ett rum du faktiskt vistas i, undan direkt sol och drag. Allt lärs in från denna avläsning, så ett skafferi eller en källare lär den fel hus.",
+          "indoor_temp_sensor": "Välj en givare i ett rum du faktiskt vistas i, undan direkt sol och drag. Det här är zonens primära givare — dess identitet, och, om extra givare sätts nedan, den enda medlemmen i genomsnittet som aldrig faller bort. Allt lärs in från den kombinerade avläsningen, så ett skafferi eller en källare lär den fel hus.",
+          "indoor_temp_sensors_extra": "Valfritt, upp till fyra till. Kombineras med givaren ovan med hjälp av läget nedan — användbart för ett hus där ett rum genomgående är kallare än resten, eller för att förhindra att en enskild givares störningar tolkas som en verklig temperaturändring.",
+          "indoor_aggregation": "Genomsnitt tar medelvärdet av alla givare som rapporterar. Lägst värmer till det kallaste rummet — huset lägger sig med varje annat rum över målet, och prisbesparingens golv skyddar då det kallaste rummet i stället för det genomsnittliga. Spelar bara roll när extra givare har lagts till ovan.",
           "outdoor_temp_sensor": "En riktig utomhusgivare om du har en — den är oftast mer exakt än en väderleksuppskattning.",
           "heating_type": "Används bara de första dagarna. Efter det har TrueTemp mätt hur snabbt ditt hus reagerar och slutar förlita sig på detta svar.",
           "enable_data_logging": "Skriver en rad per cykel till en fil i din config-mapp. Inget lämnar din maskin. Användbart om du någon gång vill kontrollera hur väl den har presterat."
@@ -91,7 +104,7 @@
         "data_description": {
           "weather_entity": "Används bara för sol- och vindprognosen. Behövs inte om båda är avstängda nedan.",
           "nordpool_price_entity": "En Nordpool-givare med dagens och morgondagens timpriser. Utan en gör prisbesparing ingenting.",
-          "enable_solar_input": "Backar av lite när solen värmer huset. Slå bara på detta om din inomhusgivare sitter någonstans dit solen faktiskt når. En givare i en källare, ett norrvänt rum eller en hall ser aldrig solinstrålningen, så detta skulle sänka temperaturen för en uppvärmning som din givare inte kan bekräfta.",
+          "enable_solar_input": "Backar av lite när solen värmer huset. Slå bara på detta om din inomhusgivare — eller, med fler än en konfigurerad, deras kombinerade avläsning — sitter någonstans dit solen faktiskt når. En givare i en källare, ett norrvänt rum eller en hall ser aldrig solinstrålningen, så detta skulle sänka temperaturen för en uppvärmning som inget du mäter kan bekräfta.",
           "enable_wind_input": "Lägger till lite när vind drar ut värme ur huset. Låt detta vara avstängt om du inte har ett äldre, dragigt hus som du märker blir kallare i hård vind. Ett rimligt tätt hus reagerar knappt på vind, och att kompensera för en effekt som inte finns lägger bara till brus.",
           "enable_weather_lookahead": "Börjar värma lite hårdare innan en kallfront eller tilltagande vind faktiskt kommer, i stället för att vänta tills huset hunnit svalna. Solen fungerar tvärtom: värmen hålls tillbaka innan ett solskensskov kommer, så att huset inte överhettas när solens egen värme väl är här. Vardera effekt tonar ut när dess förändring är här. Kräver väderprognosentiteten ovan."
         }
@@ -317,6 +330,12 @@
         "mixed": "Både radiatorer och golvvärme"
       }
     },
+    "indoor_aggregation": {
+      "options": {
+        "average": "Genomsnitt",
+        "lowest": "Lägst (kallaste rummet)"
+      }
+    },
     "output_mode": {
       "options": {
         "outdoor_temp_spoof": "Utomhustemp eller OhmOnWIFI",
@@ -331,8 +350,16 @@
       "description": "{entity_id} är otillgänglig eller rapporterar inget numeriskt värde, så TrueTemp kan inte publicera ett kompenserat värde. Den fortsätter försöka, och varningen försvinner av sig själv när givaren går att läsa igen."
     },
     "indoor_sensor_unavailable": {
-      "title": "TrueTemp ({name}) har tappat inomhusgivaren",
-      "description": "{entity_id} är otillgänglig eller rapporterar inget numeriskt värde. TrueTemp håller kvar det inlärda offsetvärdet och pausar inlärningen tills den kommer tillbaka — inget annat påverkas."
+      "title": "TrueTemp ({name}) har tappat inomhusavläsningen",
+      "description": "Ingen av de {total} inställda inomhusgivarna rapporterar ett värde ({entity_id}). TrueTemp håller kvar det inlärda offsetvärdet och pausar inlärningen tills minst en kommer tillbaka — inget annat påverkas."
+    },
+    "indoor_sensor_partial": {
+      "title": "TrueTemp ({name}) saknar en del inomhusgivare",
+      "description": "Bara {count} av {total} inställda inomhusgivare rapporterar — {entity_id} gör det inte. TrueTemp styr som vanligt med de givare som fungerar; detta försvinner av sig själv när de kommer tillbaka."
+    },
+    "indoor_sensor_missing": {
+      "title": "TrueTemp ({name}) hittar inte en inställd inomhusgivare",
+      "description": "{entity_id} finns inte längre i Home Assistant — den har bytt namn eller dess integration har tagits bort. TrueTemp fortsätter köra på övriga inställda givare, men detta måste rättas till i zonens inställningar; det försvinner inte av sig själv."
     },
     "wind_forecast_unavailable": {
       "title": "TrueTemp ({name}) har tappat vindprognosen",

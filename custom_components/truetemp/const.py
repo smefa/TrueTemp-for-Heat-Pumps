@@ -23,6 +23,15 @@ DATA_VACATION_SKIP_RELOAD = f"{DOMAIN}_vacation_skip_reload"
 
 # --- Config / options keys: sources to read -------------------------------
 CONF_INDOOR_TEMP_SENSOR = "indoor_temp_sensor"
+# Up to 4 additional indoor sensors (5 total with the primary above). Optional:
+# absent or empty reads as today's single-sensor behaviour. See
+# docs/plan_multi_indoor_sensor.md.
+CONF_INDOOR_TEMP_SENSORS_EXTRA = "indoor_temp_sensors_extra"
+# How the primary + extras combine into the single indoor_temp_c scalar every
+# downstream consumer (learner, lag, heuristic) sees. "average" (default) is
+# a plain unweighted mean; "lowest" is min() so the house heats to the worst
+# room. See docs/plan_multi_indoor_sensor.md §2.2 for why no other mode.
+CONF_INDOOR_AGGREGATION = "indoor_aggregation"
 CONF_OUTDOOR_TEMP_SENSOR = "outdoor_temp_sensor"
 CONF_WEATHER_ENTITY = "weather_entity"
 CONF_NORDPOOL_PRICE_ENTITY = "nordpool_price_entity"
@@ -152,6 +161,8 @@ KNOWN_CONFIG_KEYS = frozenset(
     {
         "name",  # homeassistant.const.CONF_NAME, inlined to keep this module HA-free
         CONF_INDOOR_TEMP_SENSOR,
+        CONF_INDOOR_TEMP_SENSORS_EXTRA,
+        CONF_INDOOR_AGGREGATION,
         CONF_OUTDOOR_TEMP_SENSOR,
         CONF_WEATHER_ENTITY,
         CONF_NORDPOOL_PRICE_ENTITY,
@@ -176,6 +187,7 @@ KNOWN_CONFIG_KEYS = frozenset(
 
 # --- Defaults -------------------------------------------------------------
 DEFAULT_INDOOR_TARGET_TEMPERATURE = 21.0
+DEFAULT_INDOOR_AGGREGATION = "average"
 DEFAULT_ENABLE_PRICE_COMPENSATION = False
 DEFAULT_COMFORT_MIN_C = 18.0
 # 0 means AUTO: heuristic._resolve_absolute_floor_c derives a floor from this
@@ -229,7 +241,7 @@ STARTUP_GRACE_PERIOD_MINUTES = 5
 # changes — the main file or any of the language files.
 FRONTEND_STATIC_URL_PREFIX = "/truetemp"
 FRONTEND_CARD_URL = f"{FRONTEND_STATIC_URL_PREFIX}/truetemp-card.js"
-FRONTEND_JS_VERSION = "20"
+FRONTEND_JS_VERSION = "22"
 
 # The vacation-plans card is a second, independent bundle (see
 # www/truetemp-vacation-card.js's module docstring for why) with its own

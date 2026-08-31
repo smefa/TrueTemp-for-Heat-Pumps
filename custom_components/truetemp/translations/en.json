@@ -7,6 +7,8 @@
         "data": {
           "name": "Name",
           "indoor_temp_sensor": "Indoor temperature sensor",
+          "indoor_temp_sensors_extra": "Extra indoor sensors",
+          "indoor_aggregation": "How to combine multiple sensors",
           "outdoor_temp_sensor": "Outdoor temperature sensor",
           "weather_entity": "Weather forecast",
           "nordpool_price_entity": "Electricity price",
@@ -14,7 +16,9 @@
           "heating_type": "How the heat gets into the room"
         },
         "data_description": {
-          "indoor_temp_sensor": "Pick a sensor in a room you actually live in, away from direct sun and draughts. Everything is learned from this reading, so a cupboard or a basement will teach it the wrong house.",
+          "indoor_temp_sensor": "Pick a sensor in a room you actually live in, away from direct sun and draughts. This becomes the zone's primary sensor — its identity, and, if you add extra sensors below, the one member of the average that never drops out. Everything is learned from the combined reading, so a cupboard or a basement will teach it the wrong house.",
+          "indoor_temp_sensors_extra": "Optional, up to four more. Combined with the sensor above using the mode below — useful for a house where one room runs colder than the rest, or to stop a single sensor's glitches from being read as a real temperature change.",
+          "indoor_aggregation": "Average takes the mean of every reporting sensor. Lowest heats to the coldest room — the house settles with every other room above target, and the price-saving floor then protects that coldest room instead of the average one. Only matters once you've added extra sensors above.",
           "outdoor_temp_sensor": "A real outdoor sensor if you have one — it is usually more accurate than a weather service estimate.",
           "weather_entity": "Optional. Used for the sun and wind forecast. You can add or change this later.",
           "nordpool_price_entity": "Optional. A Nordpool sensor with today's and tomorrow's hourly prices, needed to save money on electricity. You can add or change this later.",
@@ -28,6 +32,8 @@
         "data": {
           "name": "Name",
           "indoor_temp_sensor": "Indoor temperature sensor",
+          "indoor_temp_sensors_extra": "Extra indoor sensors",
+          "indoor_aggregation": "How to combine multiple sensors",
           "outdoor_temp_sensor": "Outdoor temperature sensor",
           "weather_entity": "Weather forecast",
           "nordpool_price_entity": "Electricity price",
@@ -46,6 +52,9 @@
       "cannot_connect": "Could not reach that address. Check the name or IP, and that the device is switched on and on the same network.",
       "invalid_host": "That's not a plain hostname or IP address — remove any scheme, path, or query string.",
       "already_configured": "That indoor sensor is already used by another TrueTemp zone.",
+      "indoor_extra_duplicates_primary": "An extra sensor can't be the same as the indoor sensor above.",
+      "indoor_extra_too_many": "Only four extra indoor sensors are allowed.",
+      "indoor_extra_is_other_primary": "That sensor is already another TrueTemp zone's indoor sensor.",
       "vacation_window_invalid": "The end date must be after the start date.",
       "vacation_date_invalid": "That is not a real date.",
       "vacation_overlap": "This plan's window overlaps another enabled plan. Adjust the dates or times, or disable one of them."
@@ -67,12 +76,16 @@
         "description": "Changing the indoor sensor means learning starts again for the new room.",
         "data": {
           "indoor_temp_sensor": "Indoor temperature sensor",
+          "indoor_temp_sensors_extra": "Extra indoor sensors",
+          "indoor_aggregation": "How to combine multiple sensors",
           "outdoor_temp_sensor": "Outdoor temperature sensor",
           "heating_type": "How the heat gets into the room",
           "enable_data_logging": "Keep a detailed local log"
         },
         "data_description": {
-          "indoor_temp_sensor": "Pick a sensor in a room you actually live in, away from direct sun and draughts. Everything is learned from this reading, so a cupboard or a basement will teach it the wrong house.",
+          "indoor_temp_sensor": "Pick a sensor in a room you actually live in, away from direct sun and draughts. This is the zone's primary sensor — its identity, and, if you add extra sensors below, the one member of the average that never drops out. Everything is learned from the combined reading, so a cupboard or a basement will teach it the wrong house.",
+          "indoor_temp_sensors_extra": "Optional, up to four more. Combined with the sensor above using the mode below — useful for a house where one room runs colder than the rest, or to stop a single sensor's glitches from being read as a real temperature change.",
+          "indoor_aggregation": "Average takes the mean of every reporting sensor. Lowest heats to the coldest room — the house settles with every other room above target, and the price-saving floor then protects that coldest room instead of the average one. Only matters once you've added extra sensors above.",
           "outdoor_temp_sensor": "A real outdoor sensor if you have one — it is usually more accurate than a weather service estimate.",
           "heating_type": "Only used for the first few days. After that, TrueTemp has measured how quickly your house responds and stops relying on this answer.",
           "enable_data_logging": "Writes one line per cycle to a file in your config folder. Nothing leaves your machine. Useful if you ever want to check how well it has been doing."
@@ -91,7 +104,7 @@
         "data_description": {
           "weather_entity": "Only used for the sun and wind forecast. Not needed if both are switched off below.",
           "nordpool_price_entity": "A Nordpool sensor with today's and tomorrow's hourly prices. Without one, price saving does nothing.",
-          "enable_solar_input": "Backs off a little when the sun is warming the house. Only switch this on if your indoor sensor is somewhere the sun actually reaches. A sensor in a basement, a north-facing room or a hallway never sees the solar gain, so this would push the temperature down for a warming that your sensor cannot confirm.",
+          "enable_solar_input": "Backs off a little when the sun is warming the house. Only switch this on if your indoor sensor — or, with more than one configured, their combined reading — is somewhere the sun actually reaches. A sensor in a basement, a north-facing room or a hallway never sees the solar gain, so this would push the temperature down for a warming nothing you measure can confirm.",
           "enable_wind_input": "Adds a little when wind is stripping heat out of the house. Leave this off unless you have an older, draughty house that you can feel getting colder in high wind. A reasonably sealed house barely responds to wind, and compensating for an effect that is not there just adds noise.",
           "enable_weather_lookahead": "Starts heating a little harder before a cold front or a rising wind actually arrives, instead of waiting for the house to cool first. Sun works the other way: it holds heat back before a burst of sunshine arrives, so the house doesn't overheat once the sun's own warmth lands. Each fades out as its change lands. Needs the weather forecast entity above."
         }
@@ -317,6 +330,12 @@
         "mixed": "Both radiators and underfloor"
       }
     },
+    "indoor_aggregation": {
+      "options": {
+        "average": "Average",
+        "lowest": "Lowest (coldest room)"
+      }
+    },
     "output_mode": {
       "options": {
         "outdoor_temp_spoof": "Outdoor temp or OhmOnWIFI",
@@ -331,8 +350,16 @@
       "description": "{entity_id} is unavailable or not reporting a number, so TrueTemp cannot publish a compensated value. It will keep retrying and this warning clears itself once the sensor is readable again."
     },
     "indoor_sensor_unavailable": {
-      "title": "TrueTemp ({name}) has lost its indoor sensor",
-      "description": "{entity_id} is unavailable or not reporting a number. TrueTemp is holding the learned offset and pausing learning until it comes back — nothing else is affected."
+      "title": "TrueTemp ({name}) has lost its indoor reading",
+      "description": "None of the {total} configured indoor sensors are reporting a number ({entity_id}). TrueTemp is holding the learned offset and pausing learning until at least one comes back — nothing else is affected."
+    },
+    "indoor_sensor_partial": {
+      "title": "TrueTemp ({name}) is missing some indoor sensors",
+      "description": "Only {count} of {total} configured indoor sensors are reporting — {entity_id} is not. TrueTemp is still controlling normally on the sensors it has; this clears itself once they come back."
+    },
+    "indoor_sensor_missing": {
+      "title": "TrueTemp ({name}) can't find a configured indoor sensor",
+      "description": "{entity_id} no longer exists in Home Assistant — it was renamed or its integration was removed. TrueTemp keeps running on any other configured sensors, but this needs to be fixed in the zone's settings; it will not clear itself."
     },
     "wind_forecast_unavailable": {
       "title": "TrueTemp ({name}) has lost its wind forecast",

@@ -30,6 +30,9 @@ house, over a few days — there are no settings to fiddle with.
 - 🧠 **Learns on its own** — no numbers to tune, no expert knowledge needed.
 - 🎯 **Hits the temperature you asked for**, even when the pump's built-in
   curve doesn't.
+- 🏠 **Reads from more than one room** (optional) — combine up to five
+  sensors, either averaged to smooth out a single sensor's noise, or set to
+  heat to the coldest room so it doesn't hide behind a warm average.
 - 🔒 **Safe by default** — installs in "watch only" mode and shows you what it
   *would* do before it touches anything. Turn it off any time and the pump
   runs exactly as it did before.
@@ -62,6 +65,8 @@ TrueTemp) decide what temperature the pump should believe it is
 outside. If you have an older pump with no smart features of its own, it's
 the easiest way to make it controllable — and TrueTemp can talk to it
 directly, with nothing else to configure.
+
+NOTE! Some heat pumps CAN be sensitive to settings writes "wearing out" the memory. We write as few updates as possible, but it's worth keeping in mind. An Ohm on WiFi doesn't have that problem.
 
 ---
 
@@ -107,7 +112,9 @@ You'll be asked four simple questions:
 
 - **Which sensor measures the room you actually live in?** Avoid a
   basement, a spot in direct sunlight, or somewhere draughty — this is the
-  reading everything else is learned from.
+  reading everything else is learned from. You can add up to four more
+  sensors right here (or later in settings) and choose whether TrueTemp
+  averages them or heats to the coldest room.
 - **Which outdoor sensor should it use?** Your own sensor if you have one,
   otherwise a weather service works fine.
 - **What temperature do you want indoors?**
@@ -127,6 +134,8 @@ you're happy, and turn it off again at any time with no side effects.
 
 Everything below is optional and can be skipped:
 
+- **Extra indoor sensors** — combine up to four more with the one above,
+  either averaged or set to heat to whichever room is coldest.
 - **Sun and wind compensation** — for homes where these genuinely affect the
   room you're measuring in.
 - **Acting on the weather forecast** — starts heating a little harder before a

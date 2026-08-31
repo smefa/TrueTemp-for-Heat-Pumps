@@ -216,6 +216,7 @@ class TestFreezing:
             ({"heating_hard_limit_engaged": True}, "hard limit"),
             ({"price_braking": True}, "price"),
             ({"dt_hours": 0.0}, "elapsed"),
+            ({"indoor_sensor_set_changed": True}, "contributing indoor sensors changed"),
         ],
     )
     def test_learning_pauses(self, override, fragment):
@@ -229,6 +230,18 @@ class TestFreezing:
         assert fragment in result.freeze_reason
         assert after.total_samples == before.total_samples
         assert after.bins[result.bin_index].hold_offset_c == pytest.approx(-1.0)
+
+    def test_indoor_sensor_set_unchanged_is_a_no_op(self):
+        """`indoor_sensor_set_changed` defaults False, so every pre-existing
+        call site — and every cycle with a stable sensor set — learns exactly
+        as before. Regression guard for the composition guard added in PR2."""
+        before = mature_state(bins=tuple(
+            OutdoorBin(hold_offset_c=-1.0, samples=5) for _ in range(learner.N_BINS)
+        ))
+        after, result = learner.step(
+            before, make_inputs(indoor_temp_c=18.0, indoor_sensor_set_changed=False)
+        )
+        assert not result.frozen
 
     def test_price_braking_does_not_get_integrated_away(self):
         """Price compensation deliberately holds the house below target. If the

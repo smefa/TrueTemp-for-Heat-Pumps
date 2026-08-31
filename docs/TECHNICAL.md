@@ -108,6 +108,10 @@ Four questions:
 - **Radiators, underfloor, or both.** Only used for the first few days, until
   it has measured your actual response times.
 
+The same setup screen also offers up to four more indoor sensors and how to
+combine them — optional, and covered in
+[Multiple indoor sensors](#multiple-indoor-sensors).
+
 Then wire `sensor.<name>_compensated_outdoor_temperature` into your heat pump's
 outdoor-temperature input — or let TrueTemp push it for you (below).
 
@@ -140,6 +144,9 @@ still just as cautious on day one.
 
 All under **Configure**, all skippable:
 
+- **Extra indoor sensors** — up to four more (five total), combined with the
+  primary using `indoor_aggregation`. See
+  [Multiple indoor sensors](#multiple-indoor-sensors).
 - **Sun and wind** — needs a weather entity. Each can be switched off
   separately, and both should be, unless your house actually meets the
   condition below. See [When to enable sun and wind](#when-to-enable-sun-and-wind).
@@ -191,6 +198,47 @@ not there adds ripple and buys nothing.
 your house needs; it just reacts after the drift starts instead of before it.
 Any steady bias from a disturbance you are not feeding forward gets absorbed
 into the learned offset within a day.
+
+### Multiple indoor sensors
+
+The primary indoor sensor picked in Setup stays required and is still the
+zone's identity (its entity id is the config entry's `unique_id`) — that does
+not change. Up to four more can be added, either during setup or later via
+**Configure**, and `indoor_aggregation` decides how the extras and the
+primary combine into the single `indoor_temp_c` every downstream calculation
+sees:
+
+- **Average** (default) — the plain mean of every sensor currently reporting.
+  The primary is not weighted specially.
+- **Lowest** — the minimum. The house is comfortable once the worst room is;
+  the average room then settles above target, and the price-saving floor
+  (`comfort_min_c`) ends up protecting the coldest room instead of the
+  average one.
+
+Only sensors currently reporting a usable number are aggregated, so losing
+one out of three does not stop the house — it just aggregates over the
+remaining two. If which sensors are contributing changes between cycles (one
+drops out or comes back), that step in the aggregate is not a real
+temperature change, so TrueTemp freezes learning and drops the response-lag
+buffer for exactly one cycle rather than reading it as drift.
+
+Three Repairs distinguish what's wrong, at different severities:
+
+| Issue | Severity | Meaning |
+| --- | --- | --- |
+| `indoor_sensor_unavailable` | WARNING | None of the configured sensors are reporting a number. Self-heals once one does. |
+| `indoor_sensor_partial` | WARNING | At least one sensor is reporting and at least one isn't. Self-heals. |
+| `indoor_sensor_missing` | ERROR | A configured entity id no longer exists at all — renamed, or its integration removed. Does not self-heal; needs the zone's settings edited. |
+
+All three respect the startup grace period, so a sensor that reads
+unavailable in the first minute after a Home Assistant restart raises
+nothing.
+
+`sensor.<name>_status` gains `indoor_sensor_count` (usable/configured),
+`indoor_sensor_readings` (entity id → °C) and `indoor_aggregation_mode`; the
+card's "Indoor now" row shows the mode and count once more than one sensor is
+configured, e.g. `20.4 °C (lowest of 3)`, with a popover listing every
+contributing sensor's reading.
 
 ### Acting on the forecast
 
@@ -415,6 +463,9 @@ that would fill it is switched off — see the module docstring in `sensor.py`.
 | `last_error` | The exception behind the *current* failure, or `None` once recovered — cleared as soon as `outdoor_sensor_ok` goes back to `True`. |
 | `last_error_at` | Local ISO timestamp of when the current failure started, or `None`. |
 | `indoor_sensor_ok` | Indoor reading available this cycle. |
+| `indoor_sensor_count` | `{usable, configured}` — how many of the configured indoor sensors are currently reporting. |
+| `indoor_sensor_readings` | Entity id → °C for every configured indoor sensor currently reporting. |
+| `indoor_aggregation_mode` | `average` or `lowest` — how multiple indoor sensors are combined. See [Multiple indoor sensors](#multiple-indoor-sensors). |
 | `wind_forecast_ok` | Present only if wind input is enabled. Weather-entity forecast had a wind reading. |
 | `cloud_sun_forecast_ok` | Present only if sun input is enabled. Weather-entity forecast had a cloud reading. |
 | `price_ok` | Present only if a price sensor is configured. Today's/tomorrow's forecast was readable. |
@@ -424,6 +475,8 @@ while it is down — `outdoor_sensor_unavailable` at `ERROR` severity, the rest 
 failing sensor surfaces in the Notifications bell and Settings > Repairs without needing a
 separate automation. One issue per source per config entry; cleared the moment that source reads
 again, and on unload/reload so nothing outlives the entry. See `TrueTempCoordinator._sync_source_issue`.
+Indoor is the exception with more than one issue key — see
+[Multiple indoor sensors](#multiple-indoor-sensors) for the three-way split.
 
 **Output breakdown** — every term behind the published value, why it's what it is now, regardless of which output sensor is actually live:
 

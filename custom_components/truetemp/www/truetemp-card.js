@@ -543,6 +543,29 @@ class TrueTempCard extends HTMLElement {
     // the real entity is reporting the raw fallback, a different number, so
     // pointing history at it would show the wrong thing.
     const publishEntity = active ? (offsetMode ? this._entities.heatPumpOffset : this._entities.compensated) : null;
+
+    // Aggregated across 1-5 sensors (see docs/plan_multi_indoor_sensor.md) —
+    // configured > 1 is the signal to show the mode and spell out the
+    // per-sensor breakdown; a single-sensor install (still the common case)
+    // keeps the plain reading and the original tooltip.
+    const indoorCount = attrs.indoor_sensor_count || {};
+    const indoorConfigured = Number(indoorCount.configured) || 0;
+    const indoorUsable = Number(indoorCount.usable) || 0;
+    const indoorMulti = indoorConfigured > 1;
+    const indoorModeLabel = attrs.indoor_aggregation_mode === "lowest" ? t.indoorModeLowest : t.indoorModeAverage;
+    const indoorValue = this._num(attrs.indoor_temp_c, 1, " °C");
+    const indoorDisplay =
+      indoorMulti && indoorValue !== "—"
+        ? `${indoorValue} (${fmt(t.indoorAggregationSummary, { mode: indoorModeLabel, count: indoorConfigured })})`
+        : indoorValue;
+    const indoorList = Object.entries(attrs.indoor_sensor_readings || {})
+      .map(([entityId, value]) => {
+        const state = this._state(entityId);
+        const name = (state && state.attributes.friendly_name) || entityId;
+        return `${name}: ${this._num(value, 1, " °C")}`;
+      })
+      .join(", ");
+
     const rows = [
       [
         active
@@ -559,8 +582,17 @@ class TrueTempCard extends HTMLElement {
               publishEntity,
       ],
                   [t.rowOutdoorNow, this._num(attrs.raw_outdoor_temp_c, 1, " °C"), "explainOutdoorNow"],
-                  [t.rowIndoorNow, this._num(attrs.indoor_temp_c, 1, " °C"), "explainIndoorNow"],
+                  [
+                    t.rowIndoorNow,
+                    indoorDisplay,
+                    indoorMulti ? "explainIndoorNowMulti" : "explainIndoorNow",
+                    null,
+                    indoorMulti
+                      ? { mode: indoorModeLabel, usable: indoorUsable, total: indoorConfigured, list: indoorList || "—" }
+                      : undefined,
+                  ],
                   [t.rowTarget, this._num(attrs.effective_indoor_target_c, 1, " °C"), "explainTarget"],
+                  [t.rowSetTemp, this._num(attrs.user_indoor_target_c, 1, " °C"), "explainSetTemp"],
     ];
 
     // Absent rather than false, same as the sources chips below: these three

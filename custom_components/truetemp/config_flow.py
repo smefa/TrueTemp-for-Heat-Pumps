@@ -51,9 +51,11 @@ from .const import (
     CONF_HEAT_CURVE_OFFSET_ENTITY,
     CONF_HEAT_CURVE_OFFSET_INVERT,
     CONF_HEATING_TYPE,
+    CONF_INDOOR_AGGREGATION,
     CONF_INDOOR_CLIMATE_ENTITY,
     CONF_INDOOR_TARGET_TEMPERATURE,
     CONF_INDOOR_TEMP_SENSOR,
+    CONF_INDOOR_TEMP_SENSORS_EXTRA,
     CONF_NORDPOOL_PRICE_ENTITY,
     CONF_OHMONWIFI_HOST,
     CONF_OUTDOOR_TEMP_SENSOR,
@@ -69,6 +71,7 @@ from .const import (
     DEFAULT_ENABLE_WIND_INPUT,
     DEFAULT_ENABLE_WEATHER_LOOKAHEAD,
     DEFAULT_HEAT_CURVE_OFFSET_INVERT,
+    DEFAULT_INDOOR_AGGREGATION,
     DEFAULT_INDOOR_TARGET_TEMPERATURE,
     DEFAULT_OUTPUT_MODE,
     DEFAULT_PRICE_SIGNIFICANCE_FLOOR,
@@ -78,6 +81,7 @@ from .const import (
     OUTPUT_MODES,
 )
 from .holiday import HOLIDAY_TARGET_MIN_C
+from .indoor_aggregation import MODE_AVERAGE, MODE_LOWEST
 from .lag import DEFAULT_HEATING_TYPE, HEATING_TYPES
 from .vacation import (
     RECURRENCE_ONCE,
@@ -112,8 +116,40 @@ _OHMONWIFI_HOST_RE = re.compile(
 )
 
 
+# 5 sensors total (primary + extras) — see indoor_aggregation.py's module
+# docstring and docs/plan_multi_indoor_sensor.md §2.1 for why this is a
+# judgement call, not a technical limit.
+MAX_INDOOR_EXTRA_SENSORS = 4
+
+
 def _valid_ohmonwifi_host(host: str) -> bool:
     return bool(_OHMONWIFI_HOST_RE.match(host))
+
+
+def _indoor_extras_error(
+    hass: HomeAssistant,
+    primary: str,
+    extras: list[str],
+    exclude_entry_id: str | None,
+) -> str | None:
+    """Validate the extra indoor sensors against the primary and every other
+    zone's own primary. Returns a translation key for `errors["base"]`, or
+    `None` if `extras` is valid."""
+    if primary in extras:
+        return "indoor_extra_duplicates_primary"
+    if len(extras) > MAX_INDOOR_EXTRA_SENSORS:
+        return "indoor_extra_too_many"
+    # Same "two zones may not share an indoor sensor" rule the primary is
+    # already held to (see async_step_settings below) — an extra must not be
+    # another zone's identity either.
+    other_primaries = {
+        entry.unique_id
+        for entry in hass.config_entries.async_entries(DOMAIN)
+        if entry.entry_id != exclude_entry_id
+    }
+    if not other_primaries.isdisjoint(extras):
+        return "indoor_extra_is_other_primary"
+    return None
 
 
 async def _async_ohmonwifi_reachable(hass: HomeAssistant, host: str) -> bool:
@@ -143,6 +179,25 @@ def _user_data_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
             vol.Required(
                 CONF_INDOOR_TEMP_SENSOR, default=defaults.get(CONF_INDOOR_TEMP_SENSOR)
             ): selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
+            # Optional, 0-4 more sensors averaged (or min()'d) together with
+            # the primary above — see docs/plan_multi_indoor_sensor.md. Absent
+            # or empty is exactly today's single-sensor behaviour.
+            vol.Optional(
+                CONF_INDOOR_TEMP_SENSORS_EXTRA,
+                default=defaults.get(CONF_INDOOR_TEMP_SENSORS_EXTRA, []),
+            ): selector.EntitySelector(
+                selector.EntitySelectorConfig(domain="sensor", multiple=True)
+            ),
+            vol.Required(
+                CONF_INDOOR_AGGREGATION,
+                default=defaults.get(CONF_INDOOR_AGGREGATION, DEFAULT_INDOOR_AGGREGATION),
+            ): selector.SelectSelector(
+                selector.SelectSelectorConfig(
+                    options=[MODE_AVERAGE, MODE_LOWEST],
+                    translation_key="indoor_aggregation",
+                    mode=selector.SelectSelectorMode.DROPDOWN,
+                )
+            ),
             vol.Required(
                 CONF_OUTDOOR_TEMP_SENSOR, default=defaults.get(CONF_OUTDOOR_TEMP_SENSOR)
             ): selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
@@ -203,31 +258,58 @@ class TrueTempConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.ConfigFlowResult:
+        errors: dict[str, str] = {}
+        defaults: dict[str, Any] = {}
         if user_input is not None:
-            await self.async_set_unique_id(user_input[CONF_INDOOR_TEMP_SENSOR])
-            self._abort_if_unique_id_configured()
-            return self.async_create_entry(title=user_input[CONF_NAME], data=user_input)
-        return self.async_show_form(step_id="user", data_schema=_user_data_schema())
+            defaults = user_input
+            error = _indoor_extras_error(
+                self.hass,
+                user_input[CONF_INDOOR_TEMP_SENSOR],
+                user_input.get(CONF_INDOOR_TEMP_SENSORS_EXTRA) or [],
+                exclude_entry_id=None,
+            )
+            if error:
+                errors["base"] = error
+            else:
+                await self.async_set_unique_id(user_input[CONF_INDOOR_TEMP_SENSOR])
+                self._abort_if_unique_id_configured()
+                return self.async_create_entry(title=user_input[CONF_NAME], data=user_input)
+        return self.async_show_form(
+            step_id="user", data_schema=_user_data_schema(defaults), errors=errors
+        )
 
     async def async_step_reconfigure(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.ConfigFlowResult:
         entry = self._get_reconfigure_entry()
+        errors: dict[str, str] = {}
+        defaults = {**entry.data, **entry.options}
         if user_input is not None:
-            if user_input[CONF_INDOOR_TEMP_SENSOR] != entry.unique_id:
-                await self.async_set_unique_id(user_input[CONF_INDOOR_TEMP_SENSOR])
-                self._abort_if_unique_id_configured()
-            return self.async_update_reload_and_abort(
-                entry, title=user_input[CONF_NAME], data=user_input
+            defaults = {**defaults, **user_input}
+            error = _indoor_extras_error(
+                self.hass,
+                user_input[CONF_INDOOR_TEMP_SENSOR],
+                user_input.get(CONF_INDOOR_TEMP_SENSORS_EXTRA) or [],
+                exclude_entry_id=entry.entry_id,
             )
+            if error:
+                errors["base"] = error
+            else:
+                if user_input[CONF_INDOOR_TEMP_SENSOR] != entry.unique_id:
+                    await self.async_set_unique_id(user_input[CONF_INDOOR_TEMP_SENSOR])
+                    self._abort_if_unique_id_configured()
+                return self.async_update_reload_and_abort(
+                    entry, title=user_input[CONF_NAME], data=user_input
+                )
         return self.async_show_form(
             step_id="reconfigure",
+            errors=errors,
             # Merged with options: `weather_entity`/`nordpool_price_entity`
             # may have been set or cleared later from the options "sources"
             # page, which is where the current value actually lives once
             # that's happened (options override data — see `_entry_value` in
             # coordinator.py).
-            data_schema=_user_data_schema({**entry.data, **entry.options}),
+            data_schema=_user_data_schema(defaults),
         )
 
     @staticmethod
@@ -304,6 +386,16 @@ class TrueTempOptionsFlow(config_entries.OptionsFlow):
                     )
 
             if not errors:
+                error = _indoor_extras_error(
+                    self.hass,
+                    new_indoor,
+                    user_input.get(CONF_INDOOR_TEMP_SENSORS_EXTRA) or [],
+                    exclude_entry_id=self.config_entry.entry_id,
+                )
+                if error:
+                    errors["base"] = error
+
+            if not errors:
                 return self._save(user_input)
             current = {**current, **user_input}
 
@@ -317,6 +409,29 @@ class TrueTempOptionsFlow(config_entries.OptionsFlow):
                         default=current.get(CONF_INDOOR_TEMP_SENSOR),
                     ): selector.EntitySelector(
                         selector.EntitySelectorConfig(domain="sensor")
+                    ),
+                    # Optional, 0-4 more sensors combined with the primary
+                    # above — see docs/plan_multi_indoor_sensor.md. Kept next
+                    # to the primary sensor since both define the same zone's
+                    # identity, rather than on the "sources" page with the
+                    # unrelated sun/wind/price extras.
+                    vol.Optional(
+                        CONF_INDOOR_TEMP_SENSORS_EXTRA,
+                        default=current.get(CONF_INDOOR_TEMP_SENSORS_EXTRA, []),
+                    ): selector.EntitySelector(
+                        selector.EntitySelectorConfig(domain="sensor", multiple=True)
+                    ),
+                    vol.Required(
+                        CONF_INDOOR_AGGREGATION,
+                        default=current.get(
+                            CONF_INDOOR_AGGREGATION, DEFAULT_INDOOR_AGGREGATION
+                        ),
+                    ): selector.SelectSelector(
+                        selector.SelectSelectorConfig(
+                            options=[MODE_AVERAGE, MODE_LOWEST],
+                            translation_key="indoor_aggregation",
+                            mode=selector.SelectSelectorMode.DROPDOWN,
+                        )
                     ),
                     vol.Required(
                         CONF_OUTDOOR_TEMP_SENSOR,
@@ -352,10 +467,11 @@ class TrueTempOptionsFlow(config_entries.OptionsFlow):
     async def async_step_sources(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.ConfigFlowResult:
+        current = self._current()
+
         if user_input is not None:
             return self._save(user_input)
 
-        current = self._current()
         return self.async_show_form(
             step_id="sources",
             data_schema=vol.Schema(

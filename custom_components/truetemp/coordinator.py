@@ -59,9 +59,11 @@ from .const import (
     CONF_HEAT_CURVE_OFFSET_ENTITY,
     CONF_HEAT_CURVE_OFFSET_INVERT,
     CONF_HEATING_TYPE,
+    CONF_INDOOR_AGGREGATION,
     CONF_INDOOR_CLIMATE_ENTITY,
     CONF_INDOOR_TARGET_TEMPERATURE,
     CONF_INDOOR_TEMP_SENSOR,
+    CONF_INDOOR_TEMP_SENSORS_EXTRA,
     CONF_NORDPOOL_PRICE_ENTITY,
     CONF_OHMONWIFI_HOST,
     CONF_OUTDOOR_TEMP_SENSOR,
@@ -77,6 +79,7 @@ from .const import (
     DEFAULT_ENABLE_WIND_INPUT,
     DEFAULT_ENABLE_WEATHER_LOOKAHEAD,
     DEFAULT_HEAT_CURVE_OFFSET_INVERT,
+    DEFAULT_INDOOR_AGGREGATION,
     DEFAULT_INDOOR_TARGET_TEMPERATURE,
     DEFAULT_OUTPUT_MODE,
     DEFAULT_PRICE_SIGNIFICANCE_FLOOR,
@@ -111,6 +114,7 @@ from .heuristic import (
     update_price_spread_history,
 )
 from .holiday import HolidayResult
+from .indoor_aggregation import aggregate as _aggregate_indoor_temps_c
 from .lag import (
     DEFAULT_HEATING_TYPE,
     LagResult,
@@ -155,7 +159,7 @@ LEARNER_STATE_SAVE_DELAY_SECONDS = 30.0
 # Skip re-pushing to an output target when the value has not meaningfully moved
 # since that channel's last successful push, so a real hardware register is not
 # rewritten every cycle for sub-noise changes.
-OUTPUT_WRITE_TOLERANCE_C = 0.05
+OUTPUT_WRITE_TOLERANCE_C = 0.1
 
 # Force a re-push after this many cycles even when the value has not moved,
 # so a target reset by something outside this integration (the OhmOnWifi
@@ -325,6 +329,17 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
         self.learner_result: LearnerResult | None = None
         self.lag_result: LagResult | None = None
         self._learner_last_step_s: float | None = None
+        # The contributing indoor sensor set from the last learner-step cycle.
+        # `None` means "no prior cycle yet" — deliberately distinct from
+        # `frozenset()` so the very first cycle is never flagged as a
+        # composition change; see `_advance_learning` and
+        # docs/plan_multi_indoor_sensor.md §2.4.
+        self._last_indoor_sensor_set: frozenset[str] | None = None
+        # Per-sensor readings from the most recent cycle, contributing sensors
+        # only (entity_id -> converted degC). Surfaced on the status sensor and
+        # in diagnostics so the spread between rooms is visible, not just the
+        # aggregate. See docs/plan_multi_indoor_sensor.md §2.6.
+        self.indoor_sensor_readings: dict[str, float] = {}
         # Whether the learner advanced on the most recent cycle. Recorded in
         # the log so an offline replay can separate decision cycles from bare
         # republishes — see `_build_log_record`.
@@ -454,11 +469,13 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
             CONF_INDOOR_TEMP_SENSOR,
             CONF_NORDPOOL_PRICE_ENTITY,
         )
-        return [
+        single_ids = (
             entity_id
             for entity_id in (_entry_value(self.entry, key, None) for key in keys)
             if entity_id
-        ]
+        )
+        extra_ids = _entry_value(self.entry, CONF_INDOOR_TEMP_SENSORS_EXTRA, [])
+        return [*single_ids, *extra_ids]
 
     @property
     def price_configured(self) -> bool:
@@ -531,6 +548,18 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
         return bool(
             _entry_value(self.entry, CONF_ENABLE_WIND_INPUT, DEFAULT_ENABLE_WIND_INPUT)
         )
+
+    @property
+    def indoor_aggregation_mode(self) -> str:
+        return _entry_value(self.entry, CONF_INDOOR_AGGREGATION, DEFAULT_INDOOR_AGGREGATION)
+
+    @property
+    def indoor_sensor_total_configured(self) -> int:
+        """1-5: the primary plus however many extras are configured, purely
+        from config — independent of which are usable this cycle."""
+        primary_id = _entry_value(self.entry, CONF_INDOOR_TEMP_SENSOR, None)
+        extra_ids = _entry_value(self.entry, CONF_INDOOR_TEMP_SENSORS_EXTRA, [])
+        return (1 if primary_id else 0) + len(extra_ids)
 
     @property
     def lookahead_enabled(self) -> bool:
@@ -617,6 +646,8 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
     _SOURCE_ISSUE_KEYS = (
         "outdoor_sensor_unavailable",
         "indoor_sensor_unavailable",
+        "indoor_sensor_partial",
+        "indoor_sensor_missing",
         "wind_forecast_unavailable",
         "cloud_sun_forecast_unavailable",
         "price_unavailable",
@@ -631,12 +662,21 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
         key: str,
         ok: bool,
         severity: ir.IssueSeverity,
-        entity_id: str | None,
+        entity_id: str | frozenset[str] | None,
+        *,
+        count: int | None = None,
+        total: int | None = None,
     ) -> None:
+        """`entity_id` may be a single id (most sources) or a set of ids (the
+        multi-sensor indoor issues) — joined here so the three translation
+        files stay in charge of the wording rather than composing sentences
+        in Python. `count`/`total` are optional extra placeholders for issues
+        whose wording needs "N of M sensors" phrasing."""
         issue_id = f"{key}_{self.entry.entry_id}"
         if ok or self.in_startup_grace_period():
             ir.async_delete_issue(self.hass, DOMAIN, issue_id)
             return
+        joined = ", ".join(sorted(entity_id)) if isinstance(entity_id, frozenset) else (entity_id or "")
         ir.async_create_issue(
             self.hass,
             DOMAIN,
@@ -646,7 +686,9 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
             translation_key=key,
             translation_placeholders={
                 "name": self.entry.title,
-                "entity_id": entity_id or "",
+                "entity_id": joined,
+                "count": "" if count is None else str(count),
+                "total": "" if total is None else str(total),
             },
         )
 
@@ -667,30 +709,76 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
 
     # --- Source reads --------------------------------------------------------
 
-    def _read_indoor_temp_c(self) -> tuple[float | None, bool]:
-        """Return (indoor_temp_c, available).
+    def _read_indoor_temp_c(
+        self,
+    ) -> tuple[
+        float | None, bool, frozenset[str], frozenset[str], frozenset[str], dict[str, float]
+    ]:
+        """Return (indoor_temp_c, available, contributing, missing, unavailable,
+        readings_by_id).
 
-        Soft-degrades: without an indoor reading the learner freezes and holds
-        its last offset, which is a safe hold rather than a failure.
+        `contributing` is the set of configured entity ids that had a usable
+        reading this cycle — 0-3 members. `missing` is configured entity ids
+        with no state object at all (renamed, or its integration removed —
+        never self-heals). `unavailable` is configured entity ids that have a
+        state object but it is not usable (unavailable/unknown/non-numeric —
+        typically self-heals). The two are disjoint and `contributing |
+        missing | unavailable` is every configured entity id. `readings_by_id`
+        holds the per-sensor converted degC value for every entity id in
+        `contributing`, so the spread between rooms is visible downstream
+        (§2.6) without a second read of the state machine. Soft-degrades:
+        without any usable reading the learner freezes and holds its last
+        offset, which is a safe hold rather than a failure. See
+        docs/plan_multi_indoor_sensor.md.
         """
-        entity_id = _entry_value(self.entry, CONF_INDOOR_TEMP_SENSOR, None)
-        if not entity_id:
+        primary_id = _entry_value(self.entry, CONF_INDOOR_TEMP_SENSOR, None)
+        if not primary_id:
             _LOGGER.warning("No indoor temperature sensor configured")
-            return None, False
-        state = self.hass.states.get(entity_id)
-        if not _state_is_usable(state):
-            _LOGGER.warning(
-                "Indoor temperature sensor %s is unavailable; holding the learned "
-                "offset and pausing learning this cycle",
-                entity_id,
+            return None, False, frozenset(), frozenset(), frozenset(), {}
+        extra_ids = _entry_value(self.entry, CONF_INDOOR_TEMP_SENSORS_EXTRA, [])
+        mode = _entry_value(self.entry, CONF_INDOOR_AGGREGATION, DEFAULT_INDOOR_AGGREGATION)
+
+        readings_by_id: dict[str, float] = {}
+        contributing: set[str] = set()
+        missing: set[str] = set()
+        unavailable: set[str] = set()
+        for entity_id in (primary_id, *extra_ids):
+            state = self.hass.states.get(entity_id)
+            if state is None:
+                _LOGGER.error("Indoor temperature sensor %s does not exist", entity_id)
+                missing.add(entity_id)
+                continue
+            if not _state_is_usable(state):
+                _LOGGER.warning(
+                    "Indoor temperature sensor %s is unavailable", entity_id
+                )
+                unavailable.add(entity_id)
+                continue
+            value = _as_float(state)
+            if value is None:
+                _LOGGER.warning("Indoor temperature sensor %s has no numeric state", entity_id)
+                unavailable.add(entity_id)
+                continue
+            unit = state.attributes.get("unit_of_measurement", UnitOfTemperature.CELSIUS)
+            readings_by_id[entity_id] = TemperatureConverter.convert(
+                value, unit, UnitOfTemperature.CELSIUS
             )
-            return None, False
-        value = _as_float(state)
-        if value is None:
-            _LOGGER.warning("Indoor temperature sensor %s has no numeric state", entity_id)
-            return None, False
-        unit = state.attributes.get("unit_of_measurement", UnitOfTemperature.CELSIUS)
-        return TemperatureConverter.convert(value, unit, UnitOfTemperature.CELSIUS), True
+            contributing.add(entity_id)
+
+        if not readings_by_id:
+            _LOGGER.warning(
+                "No indoor temperature sensor is usable; holding the learned "
+                "offset and pausing learning this cycle"
+            )
+            return None, False, frozenset(), frozenset(missing), frozenset(unavailable), {}
+        return (
+            _aggregate_indoor_temps_c(list(readings_by_id.values()), mode),
+            True,
+            frozenset(contributing),
+            frozenset(missing),
+            frozenset(unavailable),
+            readings_by_id,
+        )
 
     def _read_raw_outdoor_temp_c(self) -> float:
         """The one hard-required source: without it there is nothing to publish
@@ -996,6 +1084,7 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
         self,
         indoor_temp_c: float | None,
         indoor_ok: bool,
+        indoor_contributing: frozenset[str],
         raw_outdoor_temp_c: float,
         sun_elevation_deg: float,
         sun_azimuth_deg: float,
@@ -1026,6 +1115,15 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
         dt_hours = (now - last) / 3600.0 if last is not None else 0.0
         self._learner_last_step_s = now
 
+        # `None` means "no prior learner-step cycle yet" — never a change, so
+        # the very first step is unaffected. See docs/plan_multi_indoor_sensor.md
+        # §2.4.
+        indoor_sensor_set_changed = (
+            self._last_indoor_sensor_set is not None
+            and indoor_contributing != self._last_indoor_sensor_set
+        )
+        self._last_indoor_sensor_set = indoor_contributing
+
         # Same formula and same SOLAR_GAIN_C the feedforward term in
         # heuristic.compute() uses, threaded across the module boundary as a
         # plain float — see learner.py's module docstring and
@@ -1049,10 +1147,14 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
             estimated_solar_gain_c = SOLAR_GAIN_C * solar_effect
 
         try:
+            # A composition change makes the aggregate take a step that is not
+            # a real temperature change — drop the lag buffer exactly like an
+            # unavailable reading does, via the same `indoor_c=None` path.
+            lag_indoor_c = None if indoor_sensor_set_changed else indoor_temp_c
             self.lag_state = lag_push(
                 self.lag_state,
                 self.learner_state.prev_offset_c,
-                indoor_temp_c,
+                lag_indoor_c,
                 self._effective_target_c,
             )
             self.lag_result = lag_estimate(self.lag_state, self.heating_type)
@@ -1077,6 +1179,7 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
                     sun_precool=bool(previous and previous.sun_precool_active),
                     rise_hours=self.lag_result.rise_hours,
                     estimated_solar_gain_c=estimated_solar_gain_c,
+                    indoor_sensor_set_changed=indoor_sensor_set_changed,
                 ),
             )
             _LOGGER.debug(
@@ -1160,7 +1263,15 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
             "outdoor_sensor_unavailable", ok=True, severity=ir.IssueSeverity.ERROR, entity_id=None
         )
         await self._async_ohmonwifi_relay_failsafe(sensor_ok=True)
-        indoor_temp_c, indoor_ok = self._read_indoor_temp_c()
+        (
+            indoor_temp_c,
+            indoor_ok,
+            indoor_contributing,
+            indoor_missing,
+            indoor_unavailable,
+            indoor_readings_by_id,
+        ) = self._read_indoor_temp_c()
+        self.indoor_sensor_readings = indoor_readings_by_id
         forecast_read = await self._read_forecast()
         wind_speed_ms = forecast_read.wind_speed_ms
         wind_ok = forecast_read.wind_ok
@@ -1169,11 +1280,36 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
         sun_elevation_deg = self._read_sun_elevation()
         sun_azimuth_deg = self._read_sun_azimuth()
         current_price, price_ok = self._read_price()
+        # Three independent issues, not mutually exclusive except that
+        # `unavailable` (zero usable) and `partial` (some usable, some not)
+        # can never both be active — see docs/plan_multi_indoor_sensor.md
+        # §2.5. `missing` is orthogonal: a zone can be missing one sensor
+        # while also partial or unavailable on the rest.
+        indoor_not_reporting = indoor_missing | indoor_unavailable
+        indoor_total_configured = len(indoor_contributing) + len(indoor_not_reporting)
         self._sync_source_issue(
             "indoor_sensor_unavailable",
             ok=indoor_ok,
             severity=ir.IssueSeverity.WARNING,
-            entity_id=_entry_value(self.entry, CONF_INDOOR_TEMP_SENSOR, None),
+            entity_id=indoor_not_reporting,
+            count=len(indoor_contributing),
+            total=indoor_total_configured,
+        )
+        self._sync_source_issue(
+            "indoor_sensor_partial",
+            ok=not (indoor_ok and indoor_not_reporting),
+            severity=ir.IssueSeverity.WARNING,
+            entity_id=indoor_not_reporting,
+            count=len(indoor_contributing),
+            total=indoor_total_configured,
+        )
+        self._sync_source_issue(
+            "indoor_sensor_missing",
+            ok=not indoor_missing,
+            severity=ir.IssueSeverity.ERROR,
+            entity_id=indoor_missing,
+            count=len(indoor_missing),
+            total=indoor_total_configured,
         )
         self._sync_optional_source_issue(
             "wind_forecast_unavailable",
@@ -1299,6 +1435,7 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
         self._learner_stepped = self._due_for_learner_step() and self._advance_learning(
             indoor_temp_c,
             indoor_ok,
+            indoor_contributing,
             raw_outdoor_temp_c,
             sun_elevation_deg,
             sun_azimuth_deg,
@@ -1741,6 +1878,8 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
             # --- raw inputs ---
             "indoor_temp_c": result.indoor_temp_c,
             "indoor_ok": result.indoor_data_available,
+            "indoor_sensor_readings": self.indoor_sensor_readings,
+            "indoor_aggregation_mode": self.indoor_aggregation_mode,
             "raw_outdoor_temp_c": result.raw_outdoor_temp_c,
             "wind_speed_ms": result.wind_speed_ms,
             "wind_ok": result.wind_data_available,
