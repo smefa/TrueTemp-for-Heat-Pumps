@@ -113,7 +113,11 @@ from .heuristic import (
     today_price_spread_and_median_c,
     update_price_spread_history,
 )
-from .holiday import HolidayResult
+from .holiday import (
+    HOLIDAY_PHASE_RAMPING,
+    HOLIDAY_PHASE_SETBACK,
+    HolidayResult,
+)
 from .indoor_aggregation import aggregate as _aggregate_indoor_temps_c
 from .lag import (
     DEFAULT_HEATING_TYPE,
@@ -142,9 +146,13 @@ from .learner_store import (
 from .vacation import (
     ACTIVE_PHASES as VACATION_ACTIVE_PHASES,
     VacationPlan,
+    VacationRecovery,
     VacationReturnRamp,
     deserialize_plans,
+    resolve_recovery,
     resolve_vacation_with_return_ramp,
+    should_start_recovery,
+    start_recovery,
     start_return_ramp,
 )
 
@@ -435,6 +443,12 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
         # restart degrades to the old instant-snap behaviour for that one
         # disarm.
         self._vacation_return_ramp: VacationReturnRamp | None = None
+        # Post-setpoint catch-up window: rooms still cold after the target is
+        # already back at `indoor_target_c`. Same "not restored across
+        # restart" trade as `_vacation_return_ramp` above — a restart drops
+        # into occupied control early rather than inventing a half-spent
+        # deadline.
+        self._vacation_recovery: VacationRecovery | None = None
         # What `indoor_target_c` currently feeds actually feeds THIS instead,
         # everywhere learning/price/output need "the target right now" — see
         # the three call sites this replaces, below. Equal to
@@ -621,6 +635,7 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
 
     def _params(self) -> HeuristicParams:
         """This cycle's occupant preferences. No control gains live here."""
+        vacation_phase = self.vacation_result.phase if self.vacation_result else None
         return HeuristicParams(
             indoor_target_c=self._effective_target_c,
             user_indoor_target_c=self.indoor_target_c,
@@ -632,6 +647,7 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
             enable_wind_input=self.wind_input_enabled,
             enable_weather_lookahead=self.lookahead_enabled,
             spoof_per_indoor_c=SPOOF_PER_INDOOR_C,
+            enable_vacation_catchup=vacation_phase in VACATION_ACTIVE_PHASES,
         )
 
     # --- Source health as Repairs ---------------------------------------------
@@ -1103,16 +1119,17 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
         Wrapped so a bug in either can never break the published output: on
         failure the previous result stands, which is a held offset.
 
-        The heating-hard-limit and price-braking flags the learner needs come
-        from `heuristic.compute`, which needs the learner's offset — so the
-        hard limit is recomputed directly here via
+        The heating-hard-limit, price-braking, weather-preramp, sun-precool and
+        vacation-feedforward flags the learner needs come from
+        `heuristic.compute`, which needs the learner's offset — so the hard
+        limit is recomputed directly here via
         `resolve_heating_hard_limit_engaged` (reading this same PREVIOUS
-        cycle's engaged flag for its hysteresis) and price braking is read
-        from the PREVIOUS cycle too. One cycle of staleness on a 15-minute
-        clock is immaterial against lags measured in hours, and it avoids an
-        ordering cycle between the two. `compute()` below recomputes the
-        identical value off the identical previous cycle, so the two never
-        disagree.
+        cycle's engaged flag for its hysteresis) and the deliberate-excursion
+        flags are read from the PREVIOUS cycle too. One cycle of staleness on
+        a 15-minute clock is immaterial against lags measured in hours, and
+        it avoids an ordering cycle between the two. `compute()` below
+        recomputes the identical hard-limit value off the identical previous
+        cycle, so the two never disagree.
         """
         now = time.monotonic()
         last = self._learner_last_step_s
@@ -1181,6 +1198,13 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
                     price_braking=bool(previous and previous.price_braking),
                     weather_preramp=bool(previous and previous.weather_preramp_active),
                     sun_precool=bool(previous and previous.sun_precool_active),
+                    vacation_feedforward=bool(
+                        previous
+                        and (
+                            previous.vacation_feedforward_active
+                            or previous.vacation_catchup_active
+                        )
+                    ),
                     rise_hours=self.lag_result.rise_hours,
                     estimated_solar_gain_c=estimated_solar_gain_c,
                     indoor_sensor_set_changed=indoor_sensor_set_changed,
@@ -1410,6 +1434,9 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
         # the target the house was actually sagged to at the moment of
         # disarm. Only fires once per disarm: after the first cycle,
         # `_vacation_return_ramp` is no longer `None`.
+        prev_vacation_phase = (
+            self.vacation_result.phase if self.vacation_result is not None else None
+        )
         if (
             not self.vacation_armed
             and self._vacation_return_ramp is None
@@ -1433,6 +1460,35 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
                 return_ramp=self._vacation_return_ramp,
             )
         )
+
+        # Don't leave vacation (catch-up) until rooms are warm — or the
+        # recovery deadline fires. A fresh setback/ramping plan always wins
+        # and clears any in-flight recovery.
+        if self.vacation_result.phase in (
+            HOLIDAY_PHASE_SETBACK,
+            HOLIDAY_PHASE_RAMPING,
+        ):
+            self._vacation_recovery = None
+        else:
+            if self._vacation_recovery is None and should_start_recovery(
+                prev_phase=prev_vacation_phase,
+                result_phase=self.vacation_result.phase,
+                normal_target_c=self.indoor_target_c,
+                indoor_temp_c=indoor_temp_c,
+                indoor_ok=indoor_ok,
+            ):
+                self._vacation_recovery = start_recovery(vacation_now)
+            if self._vacation_recovery is not None:
+                overlay, self._vacation_recovery = resolve_recovery(
+                    now=vacation_now,
+                    recovery=self._vacation_recovery,
+                    normal_target_c=self.indoor_target_c,
+                    indoor_temp_c=indoor_temp_c,
+                    indoor_ok=indoor_ok,
+                )
+                if overlay is not None:
+                    self.vacation_result = overlay
+
         self._effective_target_c = self.vacation_result.target_c
 
         # Learning advances on its own clock; republishing happens every time.
@@ -1909,6 +1965,10 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
             "wind_adjustment_c": result.wind_adjustment_c,
             "sun_adjustment_c": result.sun_adjustment_c,
             "price_adjustment_c": result.price_adjustment_c,
+            "vacation_feedforward_c": result.vacation_feedforward_c,
+            "vacation_feedforward_active": result.vacation_feedforward_active,
+            "vacation_catchup_c": result.vacation_catchup_c,
+            "vacation_catchup_active": result.vacation_catchup_active,
             "price_response": result.price_response,
             "cold_brake_factor": result.cold_brake_factor,
             "price_significance_factor": result.price_significance_factor,

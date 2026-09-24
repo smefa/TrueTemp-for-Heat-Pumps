@@ -459,6 +459,106 @@ class TestReturnRamp:
         )
 
 
+class TestVacationRecovery:
+    """Post-setpoint catch-up window — rooms warm, or deadline."""
+
+    def test_should_start_after_ramping_when_rooms_are_cold(self):
+        assert (
+            vacation.should_start_recovery(
+                prev_phase=holiday.HOLIDAY_PHASE_RAMPING,
+                result_phase=holiday.HOLIDAY_PHASE_INACTIVE,
+                normal_target_c=20.5,
+                indoor_temp_c=17.7,
+                indoor_ok=True,
+            )
+            is True
+        )
+
+    def test_should_not_start_when_rooms_already_warm(self):
+        assert (
+            vacation.should_start_recovery(
+                prev_phase=holiday.HOLIDAY_PHASE_RAMPING,
+                result_phase=holiday.HOLIDAY_PHASE_INACTIVE,
+                normal_target_c=20.5,
+                indoor_temp_c=20.4,
+                indoor_ok=True,
+            )
+            is False
+        )
+
+    def test_should_not_start_when_a_new_setback_won(self):
+        assert (
+            vacation.should_start_recovery(
+                prev_phase=holiday.HOLIDAY_PHASE_RAMPING,
+                result_phase=holiday.HOLIDAY_PHASE_SETBACK,
+                normal_target_c=20.5,
+                indoor_temp_c=17.0,
+                indoor_ok=True,
+            )
+            is False
+        )
+
+    def test_should_start_when_indoor_unknown(self):
+        assert (
+            vacation.should_start_recovery(
+                prev_phase=holiday.HOLIDAY_PHASE_SETBACK,
+                result_phase=holiday.HOLIDAY_PHASE_INACTIVE,
+                normal_target_c=20.5,
+                indoor_temp_c=None,
+                indoor_ok=False,
+            )
+            is True
+        )
+
+    def test_resolve_reports_recovering_with_normal_target(self):
+        now = datetime(2026, 1, 10, 15, 0)
+        recovery = vacation.start_recovery(now)
+        assert recovery.deadline_at == now + timedelta(
+            hours=vacation.RECOVERY_DEADLINE_HOURS
+        )
+        overlay, kept = vacation.resolve_recovery(
+            now=now + timedelta(hours=1),
+            recovery=recovery,
+            normal_target_c=20.5,
+            indoor_temp_c=17.7,
+            indoor_ok=True,
+        )
+        assert kept is recovery
+        assert overlay is not None
+        assert overlay.phase == holiday.HOLIDAY_PHASE_RECOVERING
+        assert overlay.target_c == 20.5
+        assert "17.7" in overlay.reason
+
+    def test_resolve_clears_when_rooms_reach_target(self):
+        now = datetime(2026, 1, 10, 15, 0)
+        recovery = vacation.start_recovery(now)
+        overlay, kept = vacation.resolve_recovery(
+            now=now + timedelta(hours=2),
+            recovery=recovery,
+            normal_target_c=20.5,
+            indoor_temp_c=20.3,
+            indoor_ok=True,
+        )
+        assert overlay is None
+        assert kept is None
+
+    def test_resolve_clears_at_deadline_even_if_still_cold(self):
+        now = datetime(2026, 1, 10, 15, 0)
+        recovery = vacation.start_recovery(now)
+        overlay, kept = vacation.resolve_recovery(
+            now=recovery.deadline_at,
+            recovery=recovery,
+            normal_target_c=20.5,
+            indoor_temp_c=18.0,
+            indoor_ok=True,
+        )
+        assert overlay is None
+        assert kept is None
+
+    def test_recovering_is_an_active_phase_for_catchup(self):
+        assert holiday.HOLIDAY_PHASE_RECOVERING in vacation.ACTIVE_PHASES
+
+
 class TestFindOverlap:
     def test_two_enabled_overlapping_plans_returns_ids(self):
         now = datetime(2026, 1, 1, 0, 0)

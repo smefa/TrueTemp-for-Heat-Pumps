@@ -356,6 +356,12 @@ class LearnerInputs:
     # direction from `weather_preramp` — see `step`. Defaults False so every
     # existing call site is unaffected.
     sun_precool: bool = False
+    # True while vacation feedforward or catch-up is holding the house away
+    # from the occupied-target learning regime. Same freeze — without it the
+    # integrator would rewrite the bins for the trip (or the catch-up recovery)
+    # and leave them wrong after return. Defaults False so every existing call
+    # site is unaffected.
+    vacation_feedforward: bool = False
     # True when the set of contributing indoor sensors differs from last
     # cycle (a sensor joined or dropped out of the aggregate). The aggregate
     # value took a step that is not a real temperature change, so the
@@ -525,6 +531,8 @@ def _freeze_reason(inputs: LearnerInputs, state: LearnerState) -> str | None:
         return "anticipating a weather change, holding the house above target"
     if inputs.sun_precool:
         return "anticipating more sun, holding the house below target"
+    if inputs.vacation_feedforward:
+        return "vacation setback/catch-up is holding away from the occupied target"
     if state.holdoff_until_s is not None and inputs.now_s < state.holdoff_until_s:
         remaining = (state.holdoff_until_s - inputs.now_s) / 60.0
         return f"waiting {remaining:.0f} min for the last change to reach the room"

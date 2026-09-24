@@ -278,6 +278,7 @@
           "scheduled": "Planerad",
           "setback": "Sänkt temperatur",
           "ramping": "Återgår till måltemperatur",
+          "recovering": "Återhämtar",
           "done": "Klar"
         }
       }

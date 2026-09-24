@@ -215,6 +215,7 @@ class TestFreezing:
             ({"indoor_data_available": False, "indoor_temp_c": None}, "unavailable"),
             ({"heating_hard_limit_engaged": True}, "hard limit"),
             ({"price_braking": True}, "price"),
+            ({"vacation_feedforward": True}, "vacation setback"),
             ({"dt_hours": 0.0}, "elapsed"),
             ({"indoor_sensor_set_changed": True}, "contributing indoor sensors changed"),
         ],
@@ -250,6 +251,22 @@ class TestFreezing:
         state = mature_state()
         after, result = learner.step(
             state, make_inputs(indoor_temp_c=19.5, target_c=21.0, price_braking=True)
+        )
+        assert result.frozen
+        assert after.bins[result.bin_index].hold_offset_c == pytest.approx(0.0)
+
+    def test_vacation_feedforward_does_not_rewrite_occupied_bins(self):
+        """Vacation setback is fed forward in the heuristic. Learning against
+        the lowered target would deepen the occupied-house bins and leave them
+        wrong after return — freeze instead."""
+        state = mature_state()
+        after, result = learner.step(
+            state,
+            make_inputs(
+                indoor_temp_c=19.5,
+                target_c=18.0,
+                vacation_feedforward=True,
+            ),
         )
         assert result.frozen
         assert after.bins[result.bin_index].hold_offset_c == pytest.approx(0.0)

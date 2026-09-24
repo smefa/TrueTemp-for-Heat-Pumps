@@ -151,6 +151,149 @@ class TestComposition:
         assert result.indoor_target_c == pytest.approx(15.0)
         assert result.user_indoor_target_c == pytest.approx(21.0)
 
+    def test_vacation_feedforward_matches_setback_depth(self):
+        result = compute(
+            make_inputs(learned_offset_c=0.0, raw_outdoor_temp_c=0.0),
+            make_params(
+                indoor_target_c=18.0,
+                user_indoor_target_c=20.5,
+                spoof_per_indoor_c=1.0,
+            ),
+        )
+        assert result.vacation_feedforward_c == pytest.approx(2.5)
+        assert result.vacation_feedforward_active is True
+        assert result.compensated_outdoor_temp_c == pytest.approx(2.5)
+
+    def test_vacation_feedforward_scales_by_spoof_per_indoor(self):
+        result = compute(
+            make_inputs(learned_offset_c=0.0, raw_outdoor_temp_c=0.0),
+            make_params(
+                indoor_target_c=18.0,
+                user_indoor_target_c=20.0,
+                spoof_per_indoor_c=2.0,
+            ),
+        )
+        assert result.vacation_feedforward_c == pytest.approx(4.0)
+
+    def test_vacation_feedforward_is_zero_when_targets_match(self):
+        result = compute(
+            make_inputs(),
+            make_params(indoor_target_c=21.0, user_indoor_target_c=21.0),
+        )
+        assert result.vacation_feedforward_c == 0.0
+        assert result.vacation_feedforward_active is False
+
+    def test_vacation_feedforward_never_asks_for_more_heat(self):
+        """A malformed caller that passes user_target below indoor_target
+        must not produce a negative (more-heat) feedforward."""
+        result = compute(
+            make_inputs(),
+            make_params(indoor_target_c=21.0, user_indoor_target_c=18.0),
+        )
+        assert result.vacation_feedforward_c == 0.0
+        assert result.vacation_feedforward_active is False
+
+    def test_vacation_feedforward_stacks_on_top_of_learned_offset(self):
+        result = compute(
+            make_inputs(learned_offset_c=5.0, raw_outdoor_temp_c=10.0),
+            make_params(indoor_target_c=18.0, user_indoor_target_c=20.5),
+        )
+        assert result.compensated_outdoor_temp_c == pytest.approx(10.0 + 5.0 + 2.5)
+
+    def test_vacation_feedforward_appears_in_the_reason(self):
+        result = compute(
+            make_inputs(),
+            make_params(indoor_target_c=18.0, user_indoor_target_c=20.5),
+        )
+        assert "vacation setback" in result.reason
+        assert "20.5→18.0°C" in result.reason
+
+    def test_vacation_catchup_pushes_more_heat_when_rooms_lag_target(self):
+        """Replay of the Sep 2026 trip failure mode: ramp target already at
+        ~20.5 while indoor is still ~17.7. Catch-up must ask for colder
+        outdoor spoof (more heat), gated on enable_vacation_catchup."""
+        result = compute(
+            make_inputs(
+                indoor_temp_c=17.7,
+                learned_offset_c=0.0,
+                raw_outdoor_temp_c=14.0,
+            ),
+            make_params(
+                indoor_target_c=20.5,
+                user_indoor_target_c=20.5,
+                spoof_per_indoor_c=1.0,
+                enable_vacation_catchup=True,
+            ),
+        )
+        deficit = 20.5 - 17.7
+        expected = -min(
+            heuristic.VACATION_CATCHUP_MAX_C,
+            heuristic.VACATION_CATCHUP_GAIN * deficit,
+        )
+        assert result.vacation_catchup_c == pytest.approx(expected)
+        assert result.vacation_catchup_active is True
+        assert result.compensated_outdoor_temp_c == pytest.approx(14.0 + expected)
+        assert "vacation catch-up" in result.reason
+
+    def test_vacation_catchup_is_off_when_not_enabled(self):
+        result = compute(
+            make_inputs(indoor_temp_c=17.7),
+            make_params(
+                indoor_target_c=20.5,
+                user_indoor_target_c=20.5,
+                enable_vacation_catchup=False,
+            ),
+        )
+        assert result.vacation_catchup_c == 0.0
+        assert result.vacation_catchup_active is False
+
+    def test_vacation_catchup_is_zero_when_rooms_are_at_or_above_target(self):
+        for indoor in (18.0, 18.5):
+            result = compute(
+                make_inputs(indoor_temp_c=indoor),
+                make_params(
+                    indoor_target_c=18.0,
+                    user_indoor_target_c=20.5,
+                    enable_vacation_catchup=True,
+                ),
+            )
+            assert result.vacation_catchup_c == 0.0
+            assert result.vacation_catchup_active is False
+
+    def test_vacation_catchup_caps_at_max(self):
+        result = compute(
+            make_inputs(indoor_temp_c=10.0, learned_offset_c=0.0, raw_outdoor_temp_c=0.0),
+            make_params(
+                indoor_target_c=20.0,
+                user_indoor_target_c=20.0,
+                enable_vacation_catchup=True,
+            ),
+        )
+        assert result.vacation_catchup_c == pytest.approx(-heuristic.VACATION_CATCHUP_MAX_C)
+
+    def test_vacation_catchup_stacks_with_feedforward(self):
+        """During mid-ramp: setpoint still below user target (feedforward)
+        AND rooms behind the rising setpoint (catch-up)."""
+        result = compute(
+            make_inputs(
+                indoor_temp_c=17.5,
+                learned_offset_c=0.0,
+                raw_outdoor_temp_c=8.0,
+            ),
+            make_params(
+                indoor_target_c=19.0,
+                user_indoor_target_c=20.5,
+                spoof_per_indoor_c=1.0,
+                enable_vacation_catchup=True,
+            ),
+        )
+        assert result.vacation_feedforward_c == pytest.approx(1.5)
+        expected_catchup = -(heuristic.VACATION_CATCHUP_GAIN * (19.0 - 17.5))
+        assert result.vacation_catchup_c == pytest.approx(expected_catchup)
+        assert result.compensated_outdoor_temp_c == pytest.approx(
+            8.0 + 1.5 + expected_catchup
+        )
+
     def test_terms_sum_onto_the_raw_reading(self):
         result = compute(
             make_inputs(
@@ -168,6 +311,8 @@ class TestComposition:
             + result.wind_adjustment_c
             + result.sun_adjustment_c
             + result.price_adjustment_c
+            + result.vacation_feedforward_c
+            + result.vacation_catchup_c
         )
         assert result.compensated_outdoor_temp_c == pytest.approx(expected)
 

@@ -18,6 +18,12 @@ composition and the price logic:
                 + solar * SOLAR_GAIN  feedforward, optional
                 + price_adjustment    bounded, tier-scaled, timed off the
                                       measured fall time
+                + vacation_feedforward  setback delta (user target − vacation
+                                      target) as outdoor spoof; ephemeral so
+                                      the learner's occupied-house bins stay
+                                      clean — see below
+                + vacation_catchup    indoor-behind-target kick while a plan
+                                      is setback/ramping — see below
                 + weather_preramp     one-sided forecast lookahead on outdoor
                                       and wind, timed off the measured rise
                                       time, optional
@@ -62,6 +68,36 @@ Price compensation is the one thing here that intentionally holds the house
 away from target. That matters for the learner, which would otherwise read the
 sag as error and wind up fighting it. `price_braking` on the result is what
 tells the learner to freeze; see `learner._freeze_reason`.
+
+## Vacation feedforward: setback without poisoning the bins
+
+Vacation lowers `indoor_target_c` (via the coordinator) but the learner's
+per-bin offsets were trained to *hold the occupied target*. Asking the
+integrator to rediscover the whole setback on top of that would (a) take
+hours past the target-step hold-off and the authority ceiling, and (b) leave
+the deeper offset sitting in the bins after the trip ends. Instead the
+setback depth itself is fed forward here:
+
+    vacation_feedforward = max(0, user_indoor_target − indoor_target)
+                           × spoof_per_indoor
+
+Ephemeral: zero the moment the two targets meet again. The learner freezes
+while it is active (`vacation_feedforward_active`), same reason as
+`price_braking` — so a residual from an imperfect feedforward cannot wind
+the occupied-house table up or down.
+
+## Vacation catch-up: rooms behind the (rising) vacation target
+
+Feedforward above tracks *setpoint* setback depth. On the return ramp the
+setpoint climbs on a schedule paced off `rise_hours`, but the rooms can lag
+well behind that schedule — the feedforward then *shrinks* as the setpoint
+rises, exactly when more heat is needed. `vacation_catchup_c` is the
+mirror of `price_catchup_c` for that gap: while the coordinator says a
+vacation plan is actively sagging/ramping (`enable_vacation_catchup`) and
+indoor sits below the current vacation-effective target, push extra cold
+outdoor spoof proportional to the remaining deficit. It decays to zero as
+the rooms catch the target, and is off entirely outside setback/ramping so
+it cannot double the occupied-house proportional term.
 
 ## Price significance: a taper, not a gate
 
@@ -117,6 +153,11 @@ WIND_DEADBAND_MS = 4.0
 # not freeze the learner.
 PRICE_BRAKING_EPS_C = 0.05
 
+# Same role for vacation feedforward: a sub-eps setback is noise (targets
+# equal within sensor resolution), not an active trip, and must not freeze
+# learning.
+VACATION_FEEDFORWARD_EPS_C = 0.05
+
 # --- Weather lookahead (pre-ramping) ---------------------------------------
 # Total budget across the outdoor and wind pre-ramps, not per signal. A cold
 # front legitimately raises conduction loss and infiltration loss at once, so
@@ -157,6 +198,14 @@ SOLAR_PRECOOL_MAX_C = 3.0
 # indoor further than the tier's comfort bound intends).
 PRICE_CATCHUP_GAIN = 2.0
 PRICE_CATCHUP_MAX_C = 6.0
+
+# --- Vacation catch-up (feedforward kick) -----------------------------------
+# Same shape as `PRICE_CATCHUP_*` above, but for the return-ramp failure mode:
+# the vacation-effective target has climbed ahead of indoor. Gains are in
+# indoor-°C; the outdoor spoof applied is `-catchup_indoor * spoof_per_indoor`
+# (more heat). See the module docstring's "Vacation catch-up" section.
+VACATION_CATCHUP_GAIN = 2.0
+VACATION_CATCHUP_MAX_C = 6.0
 
 # Fixed (not target-relative) hard limit: at or above this raw outdoor
 # temperature, no plausible combination of learned offset, wind, sun or price
@@ -914,6 +963,10 @@ class HeuristicParams:
     # to `HeuristicResult` so a replay/debug session doesn't have to guess
     # which "indoor target" it's looking at.
     user_indoor_target_c: float = 0.0
+    # True while a vacation plan is in `setback`/`ramping` (including the
+    # manual-disarm return ramp). Gates `vacation_catchup_c` so the kick
+    # cannot run on an occupied house and double the learner's proportional.
+    enable_vacation_catchup: bool = False
 
 
 @dataclass(frozen=True)
@@ -992,6 +1045,23 @@ class HeuristicResult:
     # True while the pre-cool is deliberately holding the house below target.
     # Read by the learner, for the same reason `price_braking` is.
     sun_precool_active: bool = False
+    # Degrees of outdoor spoof from the vacation setback depth (user target
+    # minus vacation-effective target). Zero when no plan is sagging the
+    # house. See the module docstring's "Vacation feedforward" section.
+    vacation_feedforward_c: float = 0.0
+    # True while vacation feedforward is large enough to count as an active
+    # setback — freezes the learner so the trip cannot rewrite occupied-house
+    # bins. Same consumer pattern as `price_braking` / `weather_preramp_active`.
+    vacation_feedforward_active: bool = False
+    # Outdoor-spoof degrees of vacation catch-up (≤0 = more heat). Zero when
+    # catch-up is gated off or indoor has already reached the current
+    # vacation-effective target. See the module docstring's "Vacation
+    # catch-up" section.
+    vacation_catchup_c: float = 0.0
+    # True while catch-up is pushing — freezes the learner together with
+    # `vacation_feedforward_active`, so a deep recovery cannot rewrite the
+    # occupied-house bins either.
+    vacation_catchup_active: bool = False
     model_version: str = MODEL_VERSION
     # See `HeuristicParams.user_indoor_target_c`.
     user_indoor_target_c: float = 0.0
@@ -1026,6 +1096,10 @@ def compute(inputs: HeuristicInputs, params: HeuristicParams) -> HeuristicResult
             wind_adjustment_c=0.0,
             sun_adjustment_c=0.0,
             price_adjustment_c=0.0,
+            vacation_feedforward_c=0.0,
+            vacation_feedforward_active=False,
+            vacation_catchup_c=0.0,
+            vacation_catchup_active=False,
             wind_speed_ms=inputs.wind_speed_ms,
             wind_data_available=inputs.wind_data_available,
             cloud_coverage_pct=inputs.cloud_coverage_pct,
@@ -1202,6 +1276,36 @@ def compute(inputs: HeuristicInputs, params: HeuristicParams) -> HeuristicResult
             )
     price_adjustment_c += price_catchup_c * params.spoof_per_indoor_c
 
+    # Vacation feedforward: the setback depth as outdoor spoof. `indoor_target_c`
+    # is already vacation-effective; `user_indoor_target_c` is the occupied
+    # setpoint. Never negative — a plan whose min_temp sits above the normal
+    # target is clamped elsewhere, and this must not ask for *more* heat than
+    # an occupied house would. See the module docstring.
+    vacation_setback_c = max(
+        0.0, params.user_indoor_target_c - params.indoor_target_c
+    )
+    vacation_feedforward_c = vacation_setback_c * params.spoof_per_indoor_c
+    vacation_feedforward_active = vacation_feedforward_c > VACATION_FEEDFORWARD_EPS_C
+
+    # Catch-up: while a plan is setback/ramping and indoor sits below the
+    # current vacation-effective target, push extra cold spoof sized to the
+    # remaining deficit — same role as `price_catchup_c` above, opposite
+    # sign (more heat, not less). Gated off outside active vacation phases
+    # so it cannot double the occupied-house proportional term.
+    vacation_catchup_c = 0.0
+    if (
+        params.enable_vacation_catchup
+        and inputs.indoor_data_available
+        and inputs.indoor_temp_c is not None
+    ):
+        deficit_c = params.indoor_target_c - inputs.indoor_temp_c
+        if deficit_c > 0.0:
+            catchup_indoor_c = _clamp(
+                VACATION_CATCHUP_GAIN * deficit_c, 0.0, VACATION_CATCHUP_MAX_C
+            )
+            vacation_catchup_c = -catchup_indoor_c * params.spoof_per_indoor_c
+    vacation_catchup_active = abs(vacation_catchup_c) > VACATION_FEEDFORWARD_EPS_C
+
     # Weather lookahead: act on a cold front before it lands, the same way the
     # price logic above acts on a spike before it lands. Timed off the RISE
     # time, not the fall time — this is a pre-charge, and banked heat must have
@@ -1256,6 +1360,8 @@ def compute(inputs: HeuristicInputs, params: HeuristicParams) -> HeuristicResult
         inputs.raw_outdoor_temp_c
         + inputs.learned_offset_c
         + price_adjustment_c
+        + vacation_feedforward_c
+        + vacation_catchup_c
         + wind_adjustment_c
         + sun_adjustment_c
         + weather_preramp_c
@@ -1300,6 +1406,14 @@ def compute(inputs: HeuristicInputs, params: HeuristicParams) -> HeuristicResult
         if sun_precool_in_min is not None:
             reason += f" for more sun in {sun_precool_in_min:.0f} min"
         reason += f" ({precool_lead_minutes:.0f} min fall)"
+    if vacation_feedforward_active:
+        reason += (
+            f"; vacation setback "
+            f"{params.user_indoor_target_c:.1f}→{params.indoor_target_c:.1f}°C "
+            f"→ {vacation_feedforward_c:+.1f}°C"
+        )
+    if vacation_catchup_active:
+        reason += f"; vacation catch-up {vacation_catchup_c:+.1f}°C until rooms catch target"
     if price_for_braking is not None:
         reason += f"; price {price_for_braking:.2f} ['{params.price_comfort_tier}' tier"
         if no_forecast:
@@ -1354,6 +1468,10 @@ def compute(inputs: HeuristicInputs, params: HeuristicParams) -> HeuristicResult
         sun_adjustment_c=sun_adjustment_c,
         price_adjustment_c=price_adjustment_c,
         price_catchup_c=price_catchup_c,
+        vacation_feedforward_c=vacation_feedforward_c,
+        vacation_feedforward_active=vacation_feedforward_active,
+        vacation_catchup_c=vacation_catchup_c,
+        vacation_catchup_active=vacation_catchup_active,
         wind_speed_ms=inputs.wind_speed_ms,
         wind_data_available=inputs.wind_data_available,
         cloud_coverage_pct=inputs.cloud_coverage_pct,

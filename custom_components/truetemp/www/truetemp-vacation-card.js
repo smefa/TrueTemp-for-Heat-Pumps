@@ -53,10 +53,11 @@ const PHASE_KEYS = {
   scheduled: "holidayPhaseScheduled",
   setback: "holidayPhaseSetback",
   ramping: "holidayPhaseRamping",
+  recovering: "holidayPhaseRecovering",
   done: "holidayPhaseDone",
 };
 
-const OFF_TRACK_PHASES = new Set(["scheduled", "setback", "ramping"]);
+const OFF_TRACK_PHASES = new Set(["scheduled", "setback", "ramping", "recovering"]);
 
 const RECURRENCE_ONCE = "once";
 const RECURRENCE_WEEKLY = "weekly";
@@ -258,6 +259,7 @@ class TrueTempVacationCard extends HTMLElement {
         .va-dot { width:9px; height:9px; border-radius:50%; background: var(--disabled-text-color, #999); flex:none; }
         .va-setback .va-dot { background: var(--warning-color, #fa3); }
         .va-ramping .va-dot { background: var(--info-color, #39a); }
+        .va-recovering .va-dot { background: var(--info-color, #39a); }
         .va-scheduled .va-dot, .va-done .va-dot { background: var(--success-color, #4c1); }
         .va-invalid .va-dot { background: var(--error-color, #d33); }
         .va-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(110px,1fr)); gap:8px; }

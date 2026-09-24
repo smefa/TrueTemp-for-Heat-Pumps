@@ -54,6 +54,7 @@ try:  # pragma: no cover - trivial import shim
         HOLIDAY_PHASE_INACTIVE,
         HOLIDAY_PHASE_INVALID,
         HOLIDAY_PHASE_RAMPING,
+        HOLIDAY_PHASE_RECOVERING,
         HOLIDAY_PHASE_SCHEDULED,
         HOLIDAY_PHASE_SETBACK,
         HOLIDAY_RETURN_TIME,
@@ -67,6 +68,7 @@ except ImportError:  # pragma: no cover - test path-load fallback
         HOLIDAY_PHASE_INACTIVE,
         HOLIDAY_PHASE_INVALID,
         HOLIDAY_PHASE_RAMPING,
+        HOLIDAY_PHASE_RECOVERING,
         HOLIDAY_PHASE_SCHEDULED,
         HOLIDAY_PHASE_SETBACK,
         HOLIDAY_RETURN_TIME,
@@ -83,9 +85,27 @@ RECURRENCE_WEEKLY = "weekly"
 RECURRENCE_YEARLY = "yearly"
 RECURRENCES = (RECURRENCE_ONCE, RECURRENCE_WEEKLY, RECURRENCE_YEARLY)
 
-# Phases that mean "actively sagging the house right now" — the priority
-# tier `resolve_vacation()` picks a winner from first.
-ACTIVE_PHASES = (HOLIDAY_PHASE_SETBACK, HOLIDAY_PHASE_RAMPING)
+# Phases that mean "vacation is still owning the house" — setback/ramping
+# sag the setpoint; recovering keeps catch-up on until rooms are warm (or
+# the recovery deadline). Priority in `resolve_vacation()` still only
+# picks setback/ramping from the plan list; recovering is an overlay.
+ACTIVE_PHASES = (
+    HOLIDAY_PHASE_SETBACK,
+    HOLIDAY_PHASE_RAMPING,
+    HOLIDAY_PHASE_RECOVERING,
+)
+
+# How long after the setpoint returns to normal we keep pushing catch-up
+# before giving up (open window, fault, etc.). 12h is enough for a typical
+# catch-up-boosted recovery; slow underfloor houses may hit the deadline
+# still a little short — better than sticking in recovering forever.
+RECOVERY_DEADLINE_HOURS = 12.0
+# Rooms count as "warm enough" once within this many °C of the occupied
+# target — same ballpark as a comfort band, not sensor noise alone.
+RECOVERY_WITHIN_C = 0.3
+
+# Setpoint path still actively changing the target (not recovering).
+_SETPOINT_ACTIVE_PHASES = (HOLIDAY_PHASE_SETBACK, HOLIDAY_PHASE_RAMPING)
 
 
 @dataclass(frozen=True)
@@ -397,7 +417,7 @@ def resolve_vacation(
     resolved = [(plan, resolve_plan(now, plan, normal_target_c, rise_hours)) for plan in plans]
 
     for plan, result in resolved:
-        if result.phase in ACTIVE_PHASES:
+        if result.phase in _SETPOINT_ACTIVE_PHASES:
             return result, plan.id
 
     scheduled = [
@@ -521,6 +541,109 @@ def resolve_vacation_with_return_ramp(
             return ramped, None, return_ramp
 
     return _inactive_vacation(normal_target_c, "Vacation mode not armed"), None, None
+
+
+@dataclass(frozen=True)
+class VacationRecovery:
+    """Keep vacation catch-up alive after the setpoint is already back at
+    `normal_target_c`, until the rooms catch up or `deadline_at` passes.
+
+    Same coordinator-threaded pattern as `VacationReturnRamp`: the plan
+    list alone reports `done`/`inactive` the moment the schedule ends, which
+    would turn catch-up off while the house is still cold. This small piece
+    of state outlives that transition.
+    """
+
+    started_at: datetime
+    deadline_at: datetime
+
+
+def start_recovery(now: datetime) -> VacationRecovery:
+    """A new recovery window starting at `now`, lasting `RECOVERY_DEADLINE_HOURS`."""
+    return VacationRecovery(
+        started_at=now,
+        deadline_at=now + timedelta(hours=RECOVERY_DEADLINE_HOURS),
+    )
+
+
+def should_start_recovery(
+    prev_phase: str | None,
+    result_phase: str,
+    normal_target_c: float,
+    indoor_temp_c: float | None,
+    indoor_ok: bool,
+) -> bool:
+    """True on the cycle the setpoint path just ended while rooms are still
+    cold (or indoor is unknown — start anyway and let the deadline bound it).
+
+    `prev_phase` is last cycle's published phase; `result_phase` is what the
+    plan/return-ramp resolver produced THIS cycle before any recovery
+    overlay. A new setback/ramping plan must not be interrupted by recovery.
+    """
+    if prev_phase not in _SETPOINT_ACTIVE_PHASES:
+        return False
+    if result_phase in _SETPOINT_ACTIVE_PHASES:
+        return False
+    if result_phase == HOLIDAY_PHASE_RECOVERING:
+        return False
+    if not indoor_ok or indoor_temp_c is None:
+        return True
+    return indoor_temp_c < normal_target_c - RECOVERY_WITHIN_C
+
+
+def resolve_recovery(
+    now: datetime,
+    recovery: VacationRecovery,
+    normal_target_c: float,
+    indoor_temp_c: float | None,
+    indoor_ok: bool,
+) -> tuple[HolidayResult | None, VacationRecovery | None]:
+    """Overlay for one recovery cycle.
+
+    Returns `(None, None)` when recovery is finished (rooms warm, or
+    deadline hit) so the caller falls through to the underlying plan
+    result. Returns `(HolidayResult(recovering), recovery)` while still
+    catching up. Never raises.
+    """
+    if now >= recovery.deadline_at:
+        return None, None
+    if (
+        indoor_ok
+        and indoor_temp_c is not None
+        and indoor_temp_c >= normal_target_c - RECOVERY_WITHIN_C
+    ):
+        return None, None
+
+    hours_left = max(
+        0.0, (recovery.deadline_at - now).total_seconds() / 3600.0
+    )
+    if indoor_ok and indoor_temp_c is not None:
+        reason = (
+            f"Vacation setpoint done — recovering until rooms reach "
+            f"{normal_target_c:.1f}°C "
+            f"(now {indoor_temp_c:.1f}°C, deadline "
+            f"{recovery.deadline_at:%Y-%m-%d %H:%M})"
+        )
+    else:
+        reason = (
+            f"Vacation setpoint done — recovering until rooms reach "
+            f"{normal_target_c:.1f}°C "
+            f"(indoor unavailable, deadline "
+            f"{recovery.deadline_at:%Y-%m-%d %H:%M})"
+        )
+    return (
+        HolidayResult(
+            phase=HOLIDAY_PHASE_RECOVERING,
+            target_c=normal_target_c,
+            start_at=None,
+            ramp_start_at=recovery.started_at,
+            return_at=recovery.deadline_at,
+            hours_needed=hours_left,
+            on_track=True,
+            reason=reason,
+        ),
+        recovery,
+    )
 
 
 def _occurrences_in_range(

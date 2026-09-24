@@ -13,15 +13,20 @@ So the rule here is: an entity earns its place only if it is worth a graph or a
 history. Everything else lives in `extra_state_attributes` on `status`, where
 it costs no registry entry and no recorder row of its own.
 
-    compensated_outdoor_temperature   the output for OUTPUT_MODE_OUTDOOR_SPOOF.
+    compensated_outdoor_temperature   the outdoor-spoof number. Live output when
+                                      OUTPUT_MODE_OUTDOOR_SPOOF; also exposed in
+                                      OUTPUT_MODE_HEAT_CURVE_OFFSET so the fake
+                                      outdoor behind the offset stays readable
+                                      (and graphable). Unavailable only in
+                                      OUTPUT_MODE_INDOOR_CLIMATE.
     heat_pump_offset                  the output for OUTPUT_MODE_HEAT_CURVE_OFFSET.
     indoor_climate_target_temperature the output for OUTPUT_MODE_INDOOR_CLIMATE.
-                                      Exactly one of this trio is ever the
-                                      thing actually reaching the pump — see
-                                      `output_mode` in const.py — so the other
-                                      two report `available = False` rather
-                                      than a number that means nothing in that
-                                      mode.
+                                      Exactly one of heat_pump_offset /
+                                      indoor_climate_target / (compensated as
+                                      *pushed* outdoor spoof) is ever the thing
+                                      reaching the pump — see `output_mode` in
+                                      const.py. Unused mode outputs report
+                                      `available = False`.
     learned_offset                    what the house has taught the controller.
                                       The one number genuinely worth graphing:
                                       it should be stable and season-shaped,
@@ -118,8 +123,12 @@ class TrueTempEntity(CoordinatorEntity[TrueTempCoordinator]):
 
 
 class CompensatedOutdoorTempSensor(TrueTempEntity, SensorEntity):
-    """The output for OUTPUT_MODE_OUTDOOR_SPOOF: the temperature to feed the
-    heat pump's weather curve.
+    """The compensated (fake) outdoor temperature.
+
+    In OUTPUT_MODE_OUTDOOR_SPOOF this is the value pushed to the pump's weather
+    curve. In OUTPUT_MODE_HEAT_CURVE_OFFSET the pump gets a curve-offset delta
+    instead, but the same fake outdoor is still published here so it stays
+    readable and graphable beside the offset.
 
     While compensation is off, this publishes the raw outdoor temperature
     unmodified — a true no-op that can never behave worse than the pump's own
@@ -128,10 +137,8 @@ class CompensatedOutdoorTempSensor(TrueTempEntity, SensorEntity):
     `recommended_compensated_outdoor_temp_c`, so "off" is also how you preview
     it.
 
-    Reports unavailable outside OUTPUT_MODE_OUTDOOR_SPOOF, where this number is
-    never actually sent anywhere — see `HeatPumpOffsetSensor` and
-    `IndoorClimateTargetSensor` for those modes' equivalents — rather than show
-    a value that would just be confusing.
+    Reports unavailable only in OUTPUT_MODE_INDOOR_CLIMATE, where neither the
+    outdoor spoof nor the offset path is in use.
     """
 
     _attr_translation_key = "compensated_outdoor_temperature"
@@ -149,7 +156,10 @@ class CompensatedOutdoorTempSensor(TrueTempEntity, SensorEntity):
 
     @property
     def available(self) -> bool:
-        return super().available and self.coordinator.output_mode == OUTPUT_MODE_OUTDOOR_SPOOF
+        return super().available and self.coordinator.output_mode in (
+            OUTPUT_MODE_OUTDOOR_SPOOF,
+            OUTPUT_MODE_HEAT_CURVE_OFFSET,
+        )
 
     @property
     def native_value(self) -> float | None:
@@ -167,10 +177,9 @@ class HeatPumpOffsetSensor(TrueTempEntity, SensorEntity):
     `_async_push_heat_curve_offset` sends — zero while compensation is off,
     a whole number always (see `heat_curve_offset_c`'s docstring for why).
 
-    Reports unavailable outside OUTPUT_MODE_HEAT_CURVE_OFFSET, the counterpart
-    to how `CompensatedOutdoorTempSensor` and `IndoorClimateTargetSensor`
-    behave in this mode — exactly one of the trio is ever the thing actually
-    reaching the pump.
+    Reports unavailable outside OUTPUT_MODE_HEAT_CURVE_OFFSET.
+    `CompensatedOutdoorTempSensor` stays available in this mode as the fake
+    outdoor behind the offset; only `IndoorClimateTargetSensor` is hidden.
     """
 
     _attr_translation_key = "heat_pump_offset"
@@ -218,10 +227,9 @@ class IndoorClimateTargetSensor(TrueTempEntity, SensorEntity):
     `_async_push_indoor_climate` sends — the occupant's own effective target
     while compensation is off.
 
-    Reports unavailable outside OUTPUT_MODE_INDOOR_CLIMATE, the counterpart to
-    how `CompensatedOutdoorTempSensor` and `HeatPumpOffsetSensor` behave in
-    this mode — exactly one of the trio is ever the thing actually reaching
-    the pump.
+    Reports unavailable outside OUTPUT_MODE_INDOOR_CLIMATE. In that mode the
+    compensated-outdoor and heat-pump-offset sensors are hidden; this is the
+    only one of the three reaching the pump.
     """
 
     _attr_translation_key = "indoor_climate_target_temperature"

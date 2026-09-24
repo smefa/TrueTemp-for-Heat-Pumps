@@ -66,6 +66,7 @@ const VACATION_NOTE_KEYS = {
   scheduled: "noteVacationScheduled",
   setback: "noteVacationActive",
   ramping: "noteVacationRamping",
+  recovering: "noteVacationRecovering",
 };
 
 // The sentinel the sensors publish for an attribute whose feature is switched
@@ -344,7 +345,6 @@ class TrueTempCard extends HTMLElement {
         return `<tr class="${cls}">
             <td>${this._esc(label)}${marker}</td>
             <td>${this._num(b.steady_offset_c, 2)}</td>
-            <td>${this._num(b.capacity_ceiling_c, 1)}</td>
             <td>${this._num(b.recovery_rate_c_per_h, 3)}</td>
             <td>${samplesCell}</td>
           </tr>`;
@@ -357,7 +357,7 @@ class TrueTempCard extends HTMLElement {
         <table class="co-table">
           <thead>
             <tr>
-              <th>${this._esc(t.thOutdoorBand)}</th><th>${this._esc(t.thOffset)}</th><th>${this._esc(t.thCeiling)}</th>
+              <th>${this._esc(t.thOutdoorBand)}</th><th>${this._esc(t.thOffset)}</th>
               <th>${this._esc(t.thRecovery)}</th><th>${this._esc(t.thSamples)}</th>
             </tr>
           </thead>
@@ -527,11 +527,11 @@ class TrueTempCard extends HTMLElement {
     const statusKey = status ? status.state : "error";
     const progress = Number(attrs.learning_progress_pct);
     const coverage = Number(attrs.outdoor_bands_covered_pct);
-    // Exactly one of these two sensors is available at a time, chosen by the
-    // configured output mode (see sensor.py) — the other reports unavailable
-    // rather than a number that means nothing in that mode. Whichever is
-    // live is "Publishing".
+    // heatPumpOffset is available only in heat-curve-offset mode; compensated
+    // outdoor is available in both outdoor-spoof and offset modes. Whichever
+    // of the two is the thing actually reaching the pump is "Publishing".
     const offsetMode = !!(heatPumpOffset && heatPumpOffset.state !== "unavailable");
+    const compensatedAvailable = !!(compensated && compensated.state !== "unavailable");
 
     // When compensation is off, the published sensors fall back to the raw
     // outdoor temperature (see climate.py) instead of the number compensation
@@ -543,21 +543,17 @@ class TrueTempCard extends HTMLElement {
     // the real entity is reporting the raw fallback, a different number, so
     // pointing history at it would show the wrong thing.
     const publishEntity = active ? (offsetMode ? this._entities.heatPumpOffset : this._entities.compensated) : null;
+    const compensatedEntity = active && compensatedAvailable ? this._entities.compensated : null;
 
     // Aggregated across 1-5 sensors (see docs/plan_multi_indoor_sensor.md) —
-    // configured > 1 is the signal to show the mode and spell out the
-    // per-sensor breakdown; a single-sensor install (still the common case)
-    // keeps the plain reading and the original tooltip.
+    // configured > 1 is the signal to spell out mode + per-sensor breakdown
+    // in the tooltip only; the cell itself stays a plain °C reading.
     const indoorCount = attrs.indoor_sensor_count || {};
     const indoorConfigured = Number(indoorCount.configured) || 0;
     const indoorUsable = Number(indoorCount.usable) || 0;
     const indoorMulti = indoorConfigured > 1;
     const indoorModeLabel = attrs.indoor_aggregation_mode === "lowest" ? t.indoorModeLowest : t.indoorModeAverage;
     const indoorValue = this._num(attrs.indoor_temp_c, 1, " °C");
-    const indoorDisplay =
-      indoorMulti && indoorValue !== "—"
-        ? `${indoorValue} (${fmt(t.indoorAggregationSummary, { mode: indoorModeLabel, count: indoorConfigured })})`
-        : indoorValue;
     const indoorList = Object.entries(attrs.indoor_sensor_readings || {})
       .map(([entityId, value]) => {
         const state = this._state(entityId);
@@ -582,18 +578,29 @@ class TrueTempCard extends HTMLElement {
               publishEntity,
       ],
                   [t.rowOutdoorNow, this._num(attrs.raw_outdoor_temp_c, 1, " °C"), "explainOutdoorNow"],
+    ];
+    if (compensatedAvailable) {
+      rows.push([
+        t.rowCompensatedOutdoor,
+        active
+          ? this._num(compensated.state, 1, " °C")
+          : this._num(attrs.recommended_compensated_outdoor_temp_c, 1, " °C"),
+        "explainCompensatedOutdoor",
+        compensatedEntity,
+      ]);
+    }
+    rows.push(
                   [
                     t.rowIndoorNow,
-                    indoorDisplay,
+                    indoorValue,
                     indoorMulti ? "explainIndoorNowMulti" : "explainIndoorNow",
                     null,
                     indoorMulti
                       ? { mode: indoorModeLabel, usable: indoorUsable, total: indoorConfigured, list: indoorList || "—" }
                       : undefined,
                   ],
-                  [t.rowTarget, this._num(attrs.effective_indoor_target_c, 1, " °C"), "explainTarget"],
                   [t.rowSetTemp, this._num(attrs.user_indoor_target_c, 1, " °C"), "explainSetTemp"],
-    ];
+    );
 
     // Absent rather than false, same as the sources chips below: these three
     // attributes are only published when their input is switched on, so a

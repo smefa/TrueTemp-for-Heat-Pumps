@@ -278,6 +278,7 @@
           "scheduled": "Scheduled",
           "setback": "Setback",
           "ramping": "Ramping back up",
+          "recovering": "Recovering",
           "done": "Done"
         }
       }
