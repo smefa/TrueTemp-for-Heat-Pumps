@@ -158,7 +158,7 @@
           "heat_curve_offset_invert": "Der Offset dieser Wärmepumpe funktioniert andersherum"
         },
         "data_description": {
-          "heat_curve_offset_invert": "Ausgeschaltet lassen, wenn ein höherer Wert an deiner Wärmepumpe mehr Wärme bedeutet — das ist bei den meisten Wärmepumpen der Fall. Einschalten, wenn es bei deiner andersherum ist."
+          "heat_curve_offset_invert": "Aus, wenn ein höherer Wert mehr Wärme bedeutet (die meisten Wärmepumpen). An, wenn ein höherer Wert weniger Wärme bedeutet."
         }
       },
       "output_indoor_climate": {

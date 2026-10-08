@@ -158,7 +158,7 @@
           "heat_curve_offset_invert": "This pump's offset works the other way round"
         },
         "data_description": {
-          "heat_curve_offset_invert": "Leave off if a higher number on your pump means more heat, which is the case for most pumps. Switch on if it is the other way round for yours."
+          "heat_curve_offset_invert": "Off if a higher number means more heat (most pumps). On if a higher number means less heat."
         }
       },
       "output_indoor_climate": {
