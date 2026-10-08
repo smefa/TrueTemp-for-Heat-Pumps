@@ -667,6 +667,8 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
         "wind_forecast_unavailable",
         "cloud_sun_forecast_unavailable",
         "price_unavailable",
+        "heat_curve_offset_missing",
+        "heat_curve_offset_unavailable",
     )
 
     def in_startup_grace_period(self) -> bool:
@@ -1610,6 +1612,14 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
         if state is None or state.state in (None, "unknown", "unavailable"):
             return None
         try:
+            if entity_id.startswith("climate."):
+                # A climate entity's state is its hvac mode; the dial value
+                # is its target temperature attribute.
+                return TemperatureConverter.convert(
+                    float(state.attributes.get(ATTR_TEMPERATURE)),
+                    self.hass.config.units.temperature_unit,
+                    UnitOfTemperature.CELSIUS,
+                )
             return float(state.state)
         except (TypeError, ValueError):
             return None
@@ -1622,6 +1632,7 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
         max_attr: str,
         fallback_min: float,
         fallback_max: float,
+        bounds_unit: str | None = None,
     ) -> float:
         """Clamp `value` to `entity_id`'s own `min_attr`/`max_attr` state
         attributes, so a legitimately-computed value is never rejected
@@ -1629,17 +1640,57 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
         `climate` both raise rather than truncate). Falls back to
         `fallback_min`/`fallback_max` when the entity or its bounds cannot be
         read — a clamped-but-useful value beats a swallowed exception and a
-        pump left uncompensated indefinitely."""
+        pump left uncompensated indefinitely. `bounds_unit` is the temperature
+        unit the entity reports its bounds in (a climate entity uses the HA
+        unit system); they are converted so everything stays in degC."""
+        minimum, maximum = self._entity_bounds(
+            entity_id, min_attr, max_attr, fallback_min, fallback_max, bounds_unit
+        )
+        return max(minimum, min(maximum, value))
+
+    def _entity_bounds(
+        self,
+        entity_id: str,
+        min_attr: str,
+        max_attr: str,
+        fallback_min: float,
+        fallback_max: float,
+        bounds_unit: str | None = None,
+    ) -> tuple[float, float]:
         minimum, maximum = fallback_min, fallback_max
         state = self.hass.states.get(entity_id)
         if state is not None:
-            raw_min = state.attributes.get(min_attr)
-            raw_max = state.attributes.get(max_attr)
-            if isinstance(raw_min, (int, float)) and not isinstance(raw_min, bool):
-                minimum = raw_min
-            if isinstance(raw_max, (int, float)) and not isinstance(raw_max, bool):
-                maximum = raw_max
-        return max(minimum, min(maximum, value))
+
+            def _read(attr: str, default: float) -> float:
+                raw = state.attributes.get(attr)
+                if not isinstance(raw, (int, float)) or isinstance(raw, bool):
+                    return default
+                if bounds_unit is None:
+                    return raw
+                return TemperatureConverter.convert(
+                    raw, bounds_unit, UnitOfTemperature.CELSIUS
+                )
+
+            minimum = _read(min_attr, minimum)
+            maximum = _read(max_attr, maximum)
+        return minimum, maximum
+
+    def _sync_heat_curve_offset_issues(self, entity_id: str | None) -> None:
+        """Raise a Repair when the pump's offset entity is gone (renamed or its
+        integration removed — never self-heals) or merely not reporting."""
+        state = self.hass.states.get(entity_id) if entity_id else None
+        self._sync_source_issue(
+            "heat_curve_offset_missing",
+            ok=not entity_id or state is not None,
+            severity=ir.IssueSeverity.ERROR,
+            entity_id=entity_id,
+        )
+        self._sync_source_issue(
+            "heat_curve_offset_unavailable",
+            ok=not entity_id or state is None or state.state not in ("unavailable", "unknown"),
+            severity=ir.IssueSeverity.WARNING,
+            entity_id=entity_id,
+        )
 
     async def _async_push_heat_curve_offset(self, result: HeuristicResult) -> None:
         """Push a delta to the pump's own heat-curve-offset parameter instead
@@ -1648,6 +1699,7 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
         gets by publishing the unmodified raw temperature.
         """
         entity_id = self.heat_curve_offset_entity_id
+        self._sync_heat_curve_offset_issues(entity_id)
         if not entity_id:
             return
         if not self.is_active:
@@ -1671,16 +1723,26 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
         # of range, so clamp to the entity's own bounds before anything else
         # touches `value` (the dedupe/reassert cache below included, so a
         # value this can never actually deliver is never chased forever).
-        value = round(
-            self._clamp_to_entity_range(
-                entity_id,
-                value,
-                "min",
-                "max",
-                HEAT_CURVE_OFFSET_FALLBACK_MIN_C,
-                HEAT_CURVE_OFFSET_FALLBACK_MAX_C,
-            )
+        is_climate = entity_id.startswith("climate.")
+        ha_unit = self.hass.config.units.temperature_unit
+        min_attr = "min_temp" if is_climate else "min"
+        max_attr = "max_temp" if is_climate else "max"
+        bounds_args = (
+            entity_id,
+            min_attr,
+            max_attr,
+            HEAT_CURVE_OFFSET_FALLBACK_MIN_C,
+            HEAT_CURVE_OFFSET_FALLBACK_MAX_C,
+            ha_unit if is_climate else None,
         )
+        lo, hi = self._entity_bounds(*bounds_args)
+        value = round(max(lo, min(hi, value)))
+        # Rounding can step past a fractional bound (max 1.5 -> 2), which the
+        # service would reject; pull back to the nearest whole value inside.
+        if value > hi:
+            value = math.floor(hi)
+        elif value < lo:
+            value = math.ceil(lo)
         # Prefer the entity's own current state over the local cache — cheaper
         # than a timer and exactly correct, since it catches a reset by
         # anything else immediately instead of waiting out the reassert
@@ -1699,16 +1761,33 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
         ):
             return
         try:
-            await self.hass.services.async_call(
-                # Accepts a "number" or "input_number" entity (see the
-                # `heat_curve_offset_entity` selector in config_flow.py) —
-                # both expose an identical `set_value(entity_id, value)`
-                # service, keyed by the entity's own domain.
-                entity_id.split(".", 1)[0],
-                "set_value",
-                {"entity_id": entity_id, "value": value},
-                blocking=True,
-            )
+            if is_climate:
+                await self.hass.services.async_call(
+                    "climate",
+                    "set_temperature",
+                    {
+                        "entity_id": entity_id,
+                        # Climate services take the HA unit system, while the
+                        # offset is computed in degC.
+                        ATTR_TEMPERATURE: round(
+                            TemperatureConverter.convert(
+                                value, UnitOfTemperature.CELSIUS, ha_unit
+                            ),
+                            2,
+                        ),
+                    },
+                    blocking=True,
+                )
+            else:
+                await self.hass.services.async_call(
+                    # "number" and "input_number" expose an identical
+                    # `set_value(entity_id, value)` service, keyed by the
+                    # entity's own domain (see the selector in config_flow.py).
+                    entity_id.split(".", 1)[0],
+                    "set_value",
+                    {"entity_id": entity_id, "value": value},
+                    blocking=True,
+                )
             self._last_heat_curve_offset_value_c = value
             self._last_heat_curve_offset_pushed_at = dt_util.utcnow()
         except Exception as err:  # noqa: BLE001 - best-effort, never break output

@@ -154,7 +154,7 @@
         "title": "Der eigene Offset der Wärmepumpe",
         "description": "Für Wärmepumpen, bei denen sich „Heizkurve“ oder „Außentemperatur-Offset“ direkt einstellen lässt, statt den Außensensor vorzutäuschen.",
         "data": {
-          "heat_curve_offset_entity": "Number- oder Input-Number-Entität",
+          "heat_curve_offset_entity": "Number-, Input-Number- oder Climate-Entität",
           "heat_curve_offset_invert": "Der Offset dieser Wärmepumpe funktioniert andersherum"
         },
         "data_description": {
@@ -373,6 +373,14 @@
     "price_unavailable": {
       "title": "TrueTemp ({name}) hat den Strompreis verloren",
       "description": "{entity_id} ist nicht erreichbar, daher trägt die preisbasierte Einsparung diesen Zyklus nichts bei."
+    },
+    "heat_curve_offset_missing": {
+      "title": "TrueTemp ({name}) findet die Offset-Entität der Wärmepumpe nicht",
+      "description": "{entity_id} existiert in Home Assistant nicht mehr, daher kann der Offset nicht an die Pumpe gesendet werden und es erfolgt keine Kompensation. Wähle die Entität in den Zoneneinstellungen neu aus; das behebt sich nicht von selbst."
+    },
+    "heat_curve_offset_unavailable": {
+      "title": "TrueTemp ({name}) erreicht die Offset-Entität der Wärmepumpe nicht",
+      "description": "{entity_id} ist nicht verfügbar, daher kann der Offset gerade nicht an die Pumpe gesendet werden. Das erledigt sich von selbst, sobald sie wieder meldet."
     }
   },
   "exceptions": {

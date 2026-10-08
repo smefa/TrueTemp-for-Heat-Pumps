@@ -154,7 +154,7 @@
         "title": "Värmepumpens egen offset",
         "description": "För pumpar som låter dig ställa in \"värmekurva eller utomhustemperatur-offset\" direkt, istället för att modifiera utomhusgivaren.",
         "data": {
-          "heat_curve_offset_entity": "Number- eller Input Number-entitet",
+          "heat_curve_offset_entity": "Number-, Input Number- eller Climate-entitet",
           "heat_curve_offset_invert": "Denna pumps offset fungerar tvärtom"
         },
         "data_description": {
@@ -373,6 +373,14 @@
     "price_unavailable": {
       "title": "TrueTemp ({name}) har tappat elpriset",
       "description": "{entity_id} är otillgänglig, så prisbaserad besparing bidrar inte alls denna cykel."
+    },
+    "heat_curve_offset_missing": {
+      "title": "TrueTemp ({name}) hittar inte värmepumpens offset-entitet",
+      "description": "{entity_id} finns inte längre i Home Assistant, så offseten kan inte skickas till pumpen och ingen kompensering sker. Välj entiteten igen i zonens inställningar; detta försvinner inte av sig självt."
+    },
+    "heat_curve_offset_unavailable": {
+      "title": "TrueTemp ({name}) når inte värmepumpens offset-entitet",
+      "description": "{entity_id} är otillgänglig, så offseten kan inte skickas till pumpen just nu. Detta försvinner av sig självt när den rapporterar igen."
     }
   },
   "exceptions": {

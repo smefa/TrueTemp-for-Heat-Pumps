@@ -750,13 +750,14 @@ class TrueTempOptionsFlow(config_entries.OptionsFlow):
                         default=current.get(CONF_HEAT_CURVE_OFFSET_ENTITY),
                     ): vol.Any(
                         None,
-                        # Both domains expose the same `set_value` service, so
-                        # either a "number" helper/platform entity or a legacy
-                        # "input_number" helper works as a push target — see
+                        # "number"/"input_number" share the `set_value` service;
+                        # a "climate" entity (some pumps expose the offset as
+                        # its target temperature) is written through
+                        # `climate.set_temperature` — see
                         # `_async_push_heat_curve_offset` in coordinator.py.
                         selector.EntitySelector(
                             selector.EntitySelectorConfig(
-                                domain=["number", "input_number"]
+                                domain=["number", "input_number", "climate"]
                             )
                         ),
                     ),
