@@ -1353,6 +1353,13 @@ def compute(inputs: HeuristicInputs, params: HeuristicParams) -> HeuristicResult
                 lambda v: SOLAR_GAIN_C * v,
                 precool_lead_minutes,
             )
+            # Only the part of the coming sun gain that would carry indoor
+            # past target is worth backing off for: a house already below
+            # target has that much room to absorb the sun, so the deficit
+            # (as outdoor spoof) is netted off. Unknown indoor -> no netting.
+            if inputs.indoor_data_available and inputs.indoor_temp_c is not None:
+                room_c = max(0.0, params.indoor_target_c - inputs.indoor_temp_c)
+                sun_precool_raw_c -= room_c * params.spoof_per_indoor_c
             sun_precool_c = _clamp(sun_precool_raw_c, 0.0, SOLAR_PRECOOL_MAX_C)
             sun_precool_in_min = None if sun_h is None else sun_h * 60.0
 

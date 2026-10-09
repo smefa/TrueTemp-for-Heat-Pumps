@@ -1899,6 +1899,42 @@ class TestSunPreCool:
         assert result.sun_precool_c == 0.0
         assert result.sun_precool_in_min is None
 
+    def test_indoor_deficit_is_netted_off_the_precool(self):
+        # Unnetted pre-cool is SOLAR_GAIN_C * 0.25 = 1.75; 1 degC of room
+        # at spoof_per_indoor_c=1.0 absorbs 1.0 of it.
+        result = compute(
+            make_inputs(
+                indoor_temp_c=20.0,
+                solar_forecast=((0.0, 0.0), (1.0, 0.5)),
+                fall_minutes=120.0,
+            ),
+            lookahead_params(enable_solar_input=True),
+        )
+        assert result.sun_precool_c == pytest.approx(SOLAR_GAIN_C * 0.25 - 1.0)
+
+    def test_a_large_deficit_cancels_the_precool_and_unfreezes(self):
+        result = compute(
+            make_inputs(
+                indoor_temp_c=19.0,
+                solar_forecast=((0.0, 0.0), (1.0, 0.5)),
+                fall_minutes=120.0,
+            ),
+            lookahead_params(enable_solar_input=True),
+        )
+        assert result.sun_precool_c == 0.0
+        assert not result.sun_precool_active
+
+    def test_indoor_above_target_does_not_add_to_the_precool(self):
+        result = compute(
+            make_inputs(
+                indoor_temp_c=23.0,
+                solar_forecast=((0.0, 0.0), (1.0, 0.5)),
+                fall_minutes=120.0,
+            ),
+            lookahead_params(enable_solar_input=True),
+        )
+        assert result.sun_precool_c == pytest.approx(SOLAR_GAIN_C * 0.25)
+
 
 class TestSunPreCoolFreezesLearner:
     def test_flag_set_above_eps(self):
