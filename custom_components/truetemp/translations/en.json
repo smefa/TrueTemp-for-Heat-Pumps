@@ -375,12 +375,12 @@
       "description": "{entity_id} is unavailable, so price-based saving is contributing nothing this cycle."
     },
     "heat_curve_offset_missing": {
-      "title": "TrueTemp ({name}) can't find the heat pump's offset entity",
-      "description": "{entity_id} no longer exists in Home Assistant, so the offset cannot be sent to the pump and no compensation is applied. Pick the entity again in the zone's settings; this will not clear itself."
+      "title": "{name}: heat pump offset entity not found",
+      "description": "`{entity_id}` no longer exists, so TrueTemp can't send the offset to the heat pump and is not compensating.\n\nSelect the entity again in the zone's settings. This won't clear on its own."
     },
     "heat_curve_offset_unavailable": {
-      "title": "TrueTemp ({name}) can't reach the heat pump's offset entity",
-      "description": "{entity_id} is unavailable, so the offset cannot be sent to the pump right now. This clears itself once it reports again."
+      "title": "{name}: heat pump offset entity unavailable",
+      "description": "`{entity_id}` is unavailable, so TrueTemp can't send the offset to the heat pump right now.\n\nThis clears itself once the entity is back."
     }
   },
   "exceptions": {

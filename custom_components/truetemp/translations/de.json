@@ -375,12 +375,12 @@
       "description": "{entity_id} ist nicht erreichbar, daher trägt die preisbasierte Einsparung diesen Zyklus nichts bei."
     },
     "heat_curve_offset_missing": {
-      "title": "TrueTemp ({name}) findet die Offset-Entität der Wärmepumpe nicht",
-      "description": "{entity_id} existiert in Home Assistant nicht mehr, daher kann der Offset nicht an die Pumpe gesendet werden und es erfolgt keine Kompensation. Wähle die Entität in den Zoneneinstellungen neu aus; das behebt sich nicht von selbst."
+      "title": "{name}: Offset-Entität der Wärmepumpe nicht gefunden",
+      "description": "`{entity_id}` existiert nicht mehr, daher kann TrueTemp den Offset nicht an die Wärmepumpe senden und kompensiert nicht.\n\nWähle die Entität in den Zoneneinstellungen neu aus. Das behebt sich nicht von selbst."
     },
     "heat_curve_offset_unavailable": {
-      "title": "TrueTemp ({name}) erreicht die Offset-Entität der Wärmepumpe nicht",
-      "description": "{entity_id} ist nicht verfügbar, daher kann der Offset gerade nicht an die Pumpe gesendet werden. Das erledigt sich von selbst, sobald sie wieder meldet."
+      "title": "{name}: Offset-Entität der Wärmepumpe nicht verfügbar",
+      "description": "`{entity_id}` ist nicht verfügbar, daher kann TrueTemp den Offset gerade nicht an die Wärmepumpe senden.\n\nDas erledigt sich von selbst, sobald die Entität wieder da ist."
     }
   },
   "exceptions": {
