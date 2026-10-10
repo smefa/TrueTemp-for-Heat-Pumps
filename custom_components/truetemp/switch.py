@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from homeassistant.components.switch import SwitchEntity
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
@@ -43,6 +44,7 @@ class ActiveSwitch(TrueTempEntity, SwitchEntity, RestoreEntity):
     """
 
     _attr_translation_key = "active"
+    _attr_entity_category = EntityCategory.CONFIG
 
     def __init__(
         self,
@@ -104,6 +106,7 @@ class VacationModeSwitch(TrueTempEntity, SwitchEntity, RestoreEntity):
     """
 
     _attr_translation_key = "vacation_mode"
+    _attr_entity_category = EntityCategory.CONFIG
 
     def __init__(
         self,

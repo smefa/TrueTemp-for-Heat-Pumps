@@ -142,6 +142,7 @@ class CompensatedOutdoorTempSensor(TrueTempEntity, SensorEntity):
     """
 
     _attr_translation_key = "compensated_outdoor_temperature"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_device_class = SensorDeviceClass.TEMPERATURE
     _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
     _attr_state_class = SensorStateClass.MEASUREMENT
@@ -183,6 +184,7 @@ class HeatPumpOffsetSensor(TrueTempEntity, SensorEntity):
     """
 
     _attr_translation_key = "heat_pump_offset"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_state_class = SensorStateClass.MEASUREMENT
 
     def __init__(
@@ -233,6 +235,7 @@ class IndoorClimateTargetSensor(TrueTempEntity, SensorEntity):
     """
 
     _attr_translation_key = "indoor_climate_target_temperature"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_device_class = SensorDeviceClass.TEMPERATURE
     _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
     _attr_state_class = SensorStateClass.MEASUREMENT
@@ -285,6 +288,7 @@ class LearnedOffsetSensor(TrueTempEntity, SensorEntity):
     """
 
     _attr_translation_key = "learned_offset"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_device_class = SensorDeviceClass.TEMPERATURE
     _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
     _attr_state_class = SensorStateClass.MEASUREMENT
