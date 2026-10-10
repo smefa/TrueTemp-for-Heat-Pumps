@@ -18,7 +18,7 @@
         "data_description": {
           "indoor_temp_sensor": "Välj en givare i ett rum du faktiskt vistas i, undan direkt sol och drag. Den blir zonens primära givare — dess identitet, och, om extra givare läggs till nedan, den enda medlemmen i genomsnittet som aldrig faller bort. Allt lärs in från den kombinerade avläsningen, så ett skafferi eller en källare lär den fel hus.",
           "indoor_temp_sensors_extra": "Valfritt, upp till fyra till. Kombineras med givaren ovan med hjälp av läget nedan — användbart för ett hus där ett rum genomgående är kallare än resten, eller för att förhindra att en enskild givares störningar tolkas som en verklig temperaturändring.",
-          "indoor_aggregation": "Genomsnitt tar medelvärdet av alla givare som rapporterar. Lägst värmer till det kallaste rummet — huset lägger sig med varje annat rum över målet, och prisbesparingens golv skyddar då det kallaste rummet i stället för det genomsnittliga. Spelar bara roll när extra givare har lagts till ovan.",
+          "indoor_aggregation": "Genomsnitt tar medelvärdet av alla givare som rapporterar. Lägst värmer till det kallaste rummet — huset lägger sig med varje annat rum över målet, och prisbesparingens golv skyddar då det kallaste rummet i stället för det genomsnittliga. Högst slutar värma när det varmaste rummet är bekvämt — kallare rum hamnar under målet, så använd med försiktighet. Spelar bara roll när extra givare har lagts till ovan.",
           "outdoor_temp_sensor": "En riktig utomhusgivare om du har en — den är oftast mer exakt än en väderleksuppskattning.",
           "weather_entity": "Valfritt. Används för sol- och vindprognosen. Du kan lägga till eller ändra detta senare.",
           "nordpool_price_entity": "Valfritt. En Nordpool-givare med dagens och morgondagens timpriser, behövs för att spara pengar på el. Du kan lägga till eller ändra detta senare.",
@@ -85,7 +85,7 @@
         "data_description": {
           "indoor_temp_sensor": "Välj en givare i ett rum du faktiskt vistas i, undan direkt sol och drag. Det här är zonens primära givare — dess identitet, och, om extra givare sätts nedan, den enda medlemmen i genomsnittet som aldrig faller bort. Allt lärs in från den kombinerade avläsningen, så ett skafferi eller en källare lär den fel hus.",
           "indoor_temp_sensors_extra": "Valfritt, upp till fyra till. Kombineras med givaren ovan med hjälp av läget nedan — användbart för ett hus där ett rum genomgående är kallare än resten, eller för att förhindra att en enskild givares störningar tolkas som en verklig temperaturändring.",
-          "indoor_aggregation": "Genomsnitt tar medelvärdet av alla givare som rapporterar. Lägst värmer till det kallaste rummet — huset lägger sig med varje annat rum över målet, och prisbesparingens golv skyddar då det kallaste rummet i stället för det genomsnittliga. Spelar bara roll när extra givare har lagts till ovan.",
+          "indoor_aggregation": "Genomsnitt tar medelvärdet av alla givare som rapporterar. Lägst värmer till det kallaste rummet — huset lägger sig med varje annat rum över målet, och prisbesparingens golv skyddar då det kallaste rummet i stället för det genomsnittliga. Högst slutar värma när det varmaste rummet är bekvämt — kallare rum hamnar under målet, så använd med försiktighet. Spelar bara roll när extra givare har lagts till ovan.",
           "outdoor_temp_sensor": "En riktig utomhusgivare om du har en — den är oftast mer exakt än en väderleksuppskattning.",
           "heating_type": "Används bara de första dagarna. Efter det har TrueTemp mätt hur snabbt ditt hus reagerar och slutar förlita sig på detta svar.",
           "enable_data_logging": "Skriver en rad per cykel till en fil i din config-mapp. Inget lämnar din maskin. Användbart om du någon gång vill kontrollera hur väl den har presterat."
@@ -334,7 +334,8 @@
     "indoor_aggregation": {
       "options": {
         "average": "Genomsnitt",
-        "lowest": "Lägst (kallaste rummet)"
+        "lowest": "Lägst (kallaste rummet)",
+        "highest": "Högst (varmaste rummet)"
       }
     },
     "output_mode": {

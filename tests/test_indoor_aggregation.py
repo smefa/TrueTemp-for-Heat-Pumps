@@ -34,3 +34,9 @@ def test_average_of_three() -> None:
 
 def test_lowest_of_three() -> None:
     assert indoor_aggregation.aggregate([20.0, 21.0, 22.0], "lowest") == 20.0
+
+
+def test_highest_is_max():
+    assert indoor_aggregation.aggregate([20.0, 21.0, 22.0], "highest") == 22.0
+    assert indoor_aggregation.aggregate([21.5], "highest") == 21.5
+    assert indoor_aggregation.aggregate([], "highest") is None

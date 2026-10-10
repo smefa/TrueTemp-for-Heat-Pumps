@@ -18,7 +18,7 @@
         "data_description": {
           "indoor_temp_sensor": "Wähle einen Sensor in einem Raum, in dem du dich wirklich aufhältst, fern von direkter Sonne und Zugluft. Dies wird der primäre Sensor der Zone — seine Identität, und, falls unten weitere Sensoren hinzugefügt werden, das einzige Mitglied des Durchschnitts, das nie ausfällt. Alles wird aus dem kombinierten Messwert gelernt — eine Abstellkammer oder ein Keller würden dem System das falsche Haus beibringen.",
           "indoor_temp_sensors_extra": "Optional, bis zu vier weitere. Werden mit dem obigen Sensor über den Modus unten kombiniert — nützlich für ein Haus, in dem ein Raum durchgehend kälter ist als der Rest, oder um zu verhindern, dass Ausreißer eines einzelnen Sensors als echte Temperaturänderung gelesen werden.",
-          "indoor_aggregation": "Durchschnitt bildet den Mittelwert aller meldenden Sensoren. Niedrigster heizt auf den kältesten Raum — das Haus pendelt sich mit jedem anderen Raum über dem Ziel ein, und die Preisersparnis-Untergrenze schützt dann diesen kältesten statt des durchschnittlichen Raums. Wirkt sich erst aus, sobald oben zusätzliche Sensoren hinzugefügt wurden.",
+          "indoor_aggregation": "Durchschnitt bildet den Mittelwert aller meldenden Sensoren. Niedrigster heizt auf den kältesten Raum — das Haus pendelt sich mit jedem anderen Raum über dem Ziel ein, und die Preisersparnis-Untergrenze schützt dann diesen kältesten statt des durchschnittlichen Raums. Höchster hört auf zu heizen, sobald der wärmste Raum angenehm ist — kältere Räume bleiben unter dem Ziel, daher mit Vorsicht verwenden. Wirkt sich erst aus, sobald oben zusätzliche Sensoren hinzugefügt wurden.",
           "outdoor_temp_sensor": "Ein echter Außensensor, falls vorhanden — er ist meist genauer als die Schätzung eines Wetterdienstes.",
           "weather_entity": "Optional. Wird für die Sonnen- und Windvorhersage genutzt. Kann später hinzugefügt oder geändert werden.",
           "nordpool_price_entity": "Optional. Ein Nordpool-Sensor mit den stündlichen Preisen für heute und morgen, nötig um Stromkosten zu sparen. Kann später hinzugefügt oder geändert werden.",
@@ -85,7 +85,7 @@
         "data_description": {
           "indoor_temp_sensor": "Wähle einen Sensor in einem Raum, in dem du dich wirklich aufhältst, fern von direkter Sonne und Zugluft. Das ist der primäre Sensor der Zone — seine Identität, und, falls unten weitere Sensoren gesetzt werden, das einzige Mitglied des Durchschnitts, das nie ausfällt. Alles wird aus dem kombinierten Messwert gelernt — eine Abstellkammer oder ein Keller würden dem System das falsche Haus beibringen.",
           "indoor_temp_sensors_extra": "Optional, bis zu vier weitere. Werden mit dem obigen Sensor über den Modus unten kombiniert — nützlich für ein Haus, in dem ein Raum durchgehend kälter ist als der Rest, oder um zu verhindern, dass Ausreißer eines einzelnen Sensors als echte Temperaturänderung gelesen werden.",
-          "indoor_aggregation": "Durchschnitt bildet den Mittelwert aller meldenden Sensoren. Niedrigster heizt auf den kältesten Raum — das Haus pendelt sich mit jedem anderen Raum über dem Ziel ein, und die Preisersparnis-Untergrenze schützt dann diesen kältesten statt des durchschnittlichen Raums. Wirkt sich erst aus, sobald oben zusätzliche Sensoren hinzugefügt wurden.",
+          "indoor_aggregation": "Durchschnitt bildet den Mittelwert aller meldenden Sensoren. Niedrigster heizt auf den kältesten Raum — das Haus pendelt sich mit jedem anderen Raum über dem Ziel ein, und die Preisersparnis-Untergrenze schützt dann diesen kältesten statt des durchschnittlichen Raums. Höchster hört auf zu heizen, sobald der wärmste Raum angenehm ist — kältere Räume bleiben unter dem Ziel, daher mit Vorsicht verwenden. Wirkt sich erst aus, sobald oben zusätzliche Sensoren hinzugefügt wurden.",
           "outdoor_temp_sensor": "Ein echter Außensensor, falls vorhanden — er ist meist genauer als die Schätzung eines Wetterdienstes.",
           "heating_type": "Wird nur für die ersten Tage genutzt. Danach hat TrueTemp gemessen, wie schnell dein Haus reagiert, und verlässt sich nicht mehr auf diese Angabe.",
           "enable_data_logging": "Schreibt pro Zyklus eine Zeile in eine Datei in deinem Konfigurationsordner. Es verlässt nichts deinen Rechner. Nützlich, um zu prüfen, wie gut das System funktioniert hat."
@@ -334,7 +334,8 @@
     "indoor_aggregation": {
       "options": {
         "average": "Durchschnitt",
-        "lowest": "Niedrigster (kältester Raum)"
+        "lowest": "Niedrigster (kältester Raum)",
+        "highest": "Höchster (wärmster Raum)"
       }
     },
     "output_mode": {

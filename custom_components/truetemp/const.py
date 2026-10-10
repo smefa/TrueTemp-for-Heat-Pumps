@@ -30,7 +30,8 @@ CONF_INDOOR_TEMP_SENSORS_EXTRA = "indoor_temp_sensors_extra"
 # How the primary + extras combine into the single indoor_temp_c scalar every
 # downstream consumer (learner, lag, heuristic) sees. "average" (default) is
 # a plain unweighted mean; "lowest" is min() so the house heats to the worst
-# room. See docs/plan_multi_indoor_sensor.md §2.2 for why no other mode.
+# room; "highest" is max() so the house stops heating once the warmest room is
+# comfortable. See docs/plan_multi_indoor_sensor.md §2.2 for why no other mode.
 CONF_INDOOR_AGGREGATION = "indoor_aggregation"
 CONF_OUTDOOR_TEMP_SENSOR = "outdoor_temp_sensor"
 CONF_WEATHER_ENTITY = "weather_entity"
@@ -241,7 +242,7 @@ STARTUP_GRACE_PERIOD_MINUTES = 5
 # changes — the main file or any of the language files.
 FRONTEND_STATIC_URL_PREFIX = "/truetemp"
 FRONTEND_CARD_URL = f"{FRONTEND_STATIC_URL_PREFIX}/truetemp-card.js"
-FRONTEND_JS_VERSION = "26"
+FRONTEND_JS_VERSION = "27"
 
 # The vacation-plans card is a second, independent bundle (see
 # www/truetemp-vacation-card.js's module docstring for why) with its own
