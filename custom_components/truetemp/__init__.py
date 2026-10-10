@@ -17,6 +17,8 @@ from .const import (
     DATA_VACATION_SKIP_RELOAD,
     DOMAIN,
     FRONTEND_CARD_URL,
+    FRONTEND_DASHBOARD_JS_VERSION,
+    FRONTEND_DASHBOARD_URL,
     FRONTEND_JS_VERSION,
     FRONTEND_STATIC_URL_PREFIX,
     FRONTEND_VACATION_CARD_URL,
@@ -99,6 +101,7 @@ async def _async_register_frontend(hass: HomeAssistant) -> None:
     )
     add_extra_js_url(hass, f"{FRONTEND_CARD_URL}?v={FRONTEND_JS_VERSION}")
     add_extra_js_url(hass, f"{FRONTEND_VACATION_CARD_URL}?v={FRONTEND_VACATION_JS_VERSION}")
+    add_extra_js_url(hass, f"{FRONTEND_DASHBOARD_URL}?v={FRONTEND_DASHBOARD_JS_VERSION}")
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: TrueTempConfigEntry) -> bool:
