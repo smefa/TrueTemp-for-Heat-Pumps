@@ -200,7 +200,9 @@ def _user_data_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
             ),
             vol.Required(
                 CONF_OUTDOOR_TEMP_SENSOR, default=defaults.get(CONF_OUTDOOR_TEMP_SENSOR)
-            ): selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
+            ): selector.EntitySelector(
+                selector.EntitySelectorConfig(domain=["sensor", "weather"])
+            ),
             # Optional, and can also be set later from the options' "sources"
             # page — shown here too because most installs have one or both
             # ready at setup time and would otherwise have to find the
@@ -437,7 +439,7 @@ class TrueTempOptionsFlow(config_entries.OptionsFlow):
                         CONF_OUTDOOR_TEMP_SENSOR,
                         default=current.get(CONF_OUTDOOR_TEMP_SENSOR),
                     ): selector.EntitySelector(
-                        selector.EntitySelectorConfig(domain="sensor")
+                        selector.EntitySelectorConfig(domain=["sensor", "weather"])
                     ),
                     vol.Required(
                         CONF_HEATING_TYPE,

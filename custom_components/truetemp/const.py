@@ -250,3 +250,8 @@ FRONTEND_JS_VERSION = "27"
 # Replaced the single-scenario truetemp-holiday-card.js in 0.4.0.
 FRONTEND_VACATION_CARD_URL = f"{FRONTEND_STATIC_URL_PREFIX}/truetemp-vacation-card.js"
 FRONTEND_VACATION_JS_VERSION = "3"
+
+# Dashboard strategy ("Community dashboards" in HA 2026.5+'s new-dashboard
+# dialog). A third independent bundle with its own cache-busting version.
+FRONTEND_DASHBOARD_URL = f"{FRONTEND_STATIC_URL_PREFIX}/truetemp-dashboard.js"
+FRONTEND_DASHBOARD_JS_VERSION = "1"

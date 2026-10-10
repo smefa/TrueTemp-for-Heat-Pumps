@@ -13,6 +13,7 @@ coefficients to type any more, so there is nothing to choose between.
 from __future__ import annotations
 
 from homeassistant.components.select import SelectEntity
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
@@ -90,6 +91,7 @@ class PriceComfortTierSelect(_LiveSelect):
     """
 
     _attr_translation_key = "price_comfort_tier"
+    _attr_entity_category = EntityCategory.CONFIG
     _attr_options = list(PRICE_TIERS)
     _field = "price_comfort_tier"
     _fallback = PRICE_TIER_MID
@@ -121,6 +123,7 @@ class ColdCautionSelect(_LiveSelect):
     """
 
     _attr_translation_key = "cold_caution"
+    _attr_entity_category = EntityCategory.CONFIG
     _attr_options = list(COLD_CAUTIONS)
     _field = "cold_caution"
     _fallback = COLD_CAUTION_MID
