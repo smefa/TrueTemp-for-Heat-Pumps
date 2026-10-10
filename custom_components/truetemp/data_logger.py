@@ -50,28 +50,47 @@ DATA_DIR_NAME = "truetemp_data"
 # replayable, just under a .gz extension.
 MAX_LOG_BYTES = 10 * 1024 * 1024  # 10 MB
 
-# Keep only the N most recent rotated files per entry, so an install with
-# logging left on for months doesn't grow `truetemp_data/` unboundedly.
-# Oldest-first pruning happens inside `_rotate`, right after a new one lands.
-MAX_ROTATED_LOGS = 5
+# Drop rotated files older than this, so an install with logging left on for
+# years doesn't grow `truetemp_data/` unboundedly. 13 months (~396 days)
+# keeps a full seasonal cycle plus a month of overlap for year-on-year
+# comparison. Pruning happens inside `_rotate`, right after a new one lands.
+MAX_ROTATED_AGE = timedelta(days=396)
+
+_ROTATED_STAMP_FORMAT = "%Y%m%dT%H%M%SZ"
+
+
+def _rotated_at(rotated: Path, path: Path) -> datetime | None:
+    """Parse the UTC timestamp out of a rotated file's name, or None if the
+    name doesn't match (so stray files are never deleted)."""
+    stamp = rotated.name.removeprefix(f"{path.stem}.").removesuffix(
+        f"{path.suffix}.gz"
+    )
+    try:
+        return datetime.strptime(stamp, _ROTATED_STAMP_FORMAT).replace(
+            tzinfo=timezone.utc
+        )
+    except ValueError:
+        return None
 
 
 def _rotate(path: Path) -> None:
     """Gzip the current log to a timestamped sibling and remove the
     original, so the next append starts a fresh file. The timestamp is UTC
     and to-the-second, matching this project's other rename-safety
-    convention (see learner_store.py). Also prunes old rotations beyond
-    `MAX_ROTATED_LOGS`, oldest first — the timestamp format sorts
-    lexically, so a plain name sort is chronological."""
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    rotated = path.with_name(f"{path.stem}.{stamp}{path.suffix}.gz")
+    convention (see learner_store.py). Also prunes rotations older than
+    `MAX_ROTATED_AGE`, judged by the timestamp in each file's name."""
+    now = datetime.now(timezone.utc)
+    rotated = path.with_name(
+        f"{path.stem}.{now.strftime(_ROTATED_STAMP_FORMAT)}{path.suffix}.gz"
+    )
     with path.open("rb") as src, gzip.open(rotated, "wb") as dst:
         shutil.copyfileobj(src, dst)
     path.unlink()
 
-    siblings = sorted(path.parent.glob(f"{path.stem}.*{path.suffix}.gz"))
-    for stale in siblings[:-MAX_ROTATED_LOGS]:
-        stale.unlink()
+    for sibling in path.parent.glob(f"{path.stem}.*{path.suffix}.gz"):
+        stamped = _rotated_at(sibling, path)
+        if stamped is not None and now - stamped > MAX_ROTATED_AGE:
+            sibling.unlink()
 
 
 def _append_line(path: Path, line: str) -> None:

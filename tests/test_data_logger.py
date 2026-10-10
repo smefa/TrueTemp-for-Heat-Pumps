@@ -72,31 +72,25 @@ def test_append_line_rotates_once_threshold_crossed(tmp_path, monkeypatch):
         assert handle.read().splitlines() == ["a" * 20]
 
 
-def test_rotate_prunes_old_rotations_beyond_limit(tmp_path, monkeypatch):
-    monkeypatch.setattr(data_logger, "MAX_ROTATED_LOGS", 2)
+def test_rotate_prunes_rotations_older_than_max_age(tmp_path):
     path = tmp_path / "entry.jsonl"
-
-    # Three pre-existing rotations, oldest to newest by name (the timestamp
-    # format sorts lexically).
-    old_names = [
-        "entry.20260101T000000Z.jsonl.gz",
-        "entry.20260102T000000Z.jsonl.gz",
-        "entry.20260103T000000Z.jsonl.gz",
-    ]
-    for name in old_names:
+    fmt = "%Y%m%dT%H%M%SZ"
+    now = datetime.now(timezone.utc)
+    too_old = f"entry.{(now - data_logger.MAX_ROTATED_AGE - timedelta(days=1)).strftime(fmt)}.jsonl.gz"
+    recent = f"entry.{(now - data_logger.MAX_ROTATED_AGE + timedelta(days=1)).strftime(fmt)}.jsonl.gz"
+    stray = "entry.notatimestamp.jsonl.gz"
+    for name in (too_old, recent, stray):
         with gzip.open(tmp_path / name, "wt", encoding="utf-8") as handle:
             handle.write("stale\n")
 
     path.write_text("fresh\n", encoding="utf-8")
     data_logger._rotate(path)
 
-    remaining = sorted(p.name for p in tmp_path.glob("entry.*.jsonl.gz"))
-    # 3 pre-existing + 1 just-created = 4 candidates, capped to the newest 2:
-    # the brand-new rotation and the newest pre-existing one.
-    assert len(remaining) == 2
-    assert "entry.20260101T000000Z.jsonl.gz" not in remaining
-    assert "entry.20260102T000000Z.jsonl.gz" not in remaining
-    assert "entry.20260103T000000Z.jsonl.gz" in remaining
+    remaining = {p.name for p in tmp_path.glob("entry.*.jsonl.gz")}
+    assert too_old not in remaining
+    assert recent in remaining
+    assert stray in remaining  # unparseable names are never deleted
+    assert len(remaining) == 3  # recent + stray + the brand-new rotation
 
 
 def test_rotation_preserves_original_content_and_removes_source(tmp_path):

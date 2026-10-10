@@ -809,14 +809,25 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
         if not entity_id:
             raise UpdateFailed("No outdoor temperature sensor configured")
         state = self.hass.states.get(entity_id)
-        if not _state_is_usable(state):
+        # A weather entity's state is a condition ("sunny"); its temperature
+        # and unit live in attributes. "unknown" is a legitimate condition
+        # there, so only a missing/unavailable entity fails before the
+        # attribute check.
+        is_weather = entity_id.split(".", 1)[0] == "weather"
+        if state is None or state.state == STATE_UNAVAILABLE or (
+            not is_weather and state.state == STATE_UNKNOWN
+        ):
             raise UpdateFailed(f"Outdoor temperature sensor {entity_id} is unavailable")
-        value = _as_float(state)
+        value = _as_float(state, "temperature" if is_weather else None)
         if value is None:
             raise UpdateFailed(
-                f"Outdoor temperature sensor {entity_id} has no numeric state"
+                f"Outdoor temperature sensor {entity_id} has no numeric "
+                f"{'temperature' if is_weather else 'state'}"
             )
-        unit = state.attributes.get("unit_of_measurement", UnitOfTemperature.CELSIUS)
+        unit = state.attributes.get(
+            "temperature_unit" if is_weather else "unit_of_measurement",
+            UnitOfTemperature.CELSIUS,
+        )
         return TemperatureConverter.convert(value, unit, UnitOfTemperature.CELSIUS)
 
     async def _read_forecast(self) -> ForecastRead:
