@@ -81,7 +81,7 @@ from .const import (
     OUTPUT_MODES,
 )
 from .holiday import HOLIDAY_TARGET_MIN_C
-from .indoor_aggregation import MODE_AVERAGE, MODE_LOWEST
+from .indoor_aggregation import MODE_AVERAGE, MODE_HIGHEST, MODE_LOWEST
 from .lag import DEFAULT_HEATING_TYPE, HEATING_TYPES
 from .vacation import (
     RECURRENCE_ONCE,
@@ -193,7 +193,7 @@ def _user_data_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
                 default=defaults.get(CONF_INDOOR_AGGREGATION, DEFAULT_INDOOR_AGGREGATION),
             ): selector.SelectSelector(
                 selector.SelectSelectorConfig(
-                    options=[MODE_AVERAGE, MODE_LOWEST],
+                    options=[MODE_AVERAGE, MODE_LOWEST, MODE_HIGHEST],
                     translation_key="indoor_aggregation",
                     mode=selector.SelectSelectorMode.DROPDOWN,
                 )
@@ -428,7 +428,7 @@ class TrueTempOptionsFlow(config_entries.OptionsFlow):
                         ),
                     ): selector.SelectSelector(
                         selector.SelectSelectorConfig(
-                            options=[MODE_AVERAGE, MODE_LOWEST],
+                            options=[MODE_AVERAGE, MODE_LOWEST, MODE_HIGHEST],
                             translation_key="indoor_aggregation",
                             mode=selector.SelectSelectorMode.DROPDOWN,
                         )
@@ -750,13 +750,14 @@ class TrueTempOptionsFlow(config_entries.OptionsFlow):
                         default=current.get(CONF_HEAT_CURVE_OFFSET_ENTITY),
                     ): vol.Any(
                         None,
-                        # Both domains expose the same `set_value` service, so
-                        # either a "number" helper/platform entity or a legacy
-                        # "input_number" helper works as a push target — see
+                        # "number"/"input_number" share the `set_value` service;
+                        # a "climate" entity (some pumps expose the offset as
+                        # its target temperature) is written through
+                        # `climate.set_temperature` — see
                         # `_async_push_heat_curve_offset` in coordinator.py.
                         selector.EntitySelector(
                             selector.EntitySelectorConfig(
-                                domain=["number", "input_number"]
+                                domain=["number", "input_number", "climate"]
                             )
                         ),
                     ),

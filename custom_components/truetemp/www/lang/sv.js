@@ -96,6 +96,7 @@ export const STRINGS = {
   explainIndoorNowMulti: "Inomhustemperatur sammanställd ({mode}) från {usable} av {total} konfigurerade sensorer: {list}.",
   indoorModeAverage: "medel",
   indoorModeLowest: "lägsta",
+  indoorModeHighest: "högsta",
   explainSetTemp: "Termostatens inställda inomhusbörvärde.",
   explainSun: "Temperaturjustering beräknad från prognosen för moln och sol.",
   explainWind: "Temperaturjustering beräknad från vindprognosen.",

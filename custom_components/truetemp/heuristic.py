@@ -141,7 +141,7 @@ OUTPUT_SANITY_MAX_C = 25.0
 # Feedforward gains for the two optional weather inputs. See the module
 # docstring for why these are constants rather than configuration or learned
 # parameters. Units: degC of outdoor spoof per unit of input.
-SOLAR_GAIN_C = 4.0
+SOLAR_GAIN_C = 7.0
 WIND_GAIN_C_PER_MS = 0.3
 # Below this the wind term is a breeze, not a draught: contributes exactly 0
 # rather than a tiny, mostly-noise correction. The gain applies to the speed
@@ -280,10 +280,10 @@ def solar_effect_of(
     approaches 1.0 — a fixed vertical pane never gets the full extraterrestrial
     dose the old shape treated as achievable.
 
-    Cloud discount is `1 - 0.75 * cloud_fraction^3.4`, not linear: partly
-    cloudy skies stay close to full brightness (diffuse light dominates well
-    before overcast), and full overcast still passes about a quarter of clear
-    sky rather than zero. Missing cloud data is treated as clear
+    Cloud discount is `1 - cloud_fraction^3.4`, not linear: partly cloudy
+    skies stay close to full brightness (diffuse light dominates well before
+    overcast), while full overcast gives zero — no sun means no solar
+    addition. Missing cloud data is treated as clear
     (`cloud_coverage_pct` is None -> 0% coverage), the same "assume clear"
     behaviour `compute()` already reported in its reason string.
 
@@ -303,7 +303,7 @@ def solar_effect_of(
     transmittance = 0.7 ** (air_mass**0.678)
     aperture_factor = incidence_factor * transmittance
     cloud_fraction = (cloud_coverage_pct or 0.0) / 100.0
-    cloud_factor = 1.0 - 0.75 * cloud_fraction**3.4
+    cloud_factor = 1.0 - cloud_fraction**3.4
     return aperture_factor * cloud_factor
 
 
@@ -1353,6 +1353,13 @@ def compute(inputs: HeuristicInputs, params: HeuristicParams) -> HeuristicResult
                 lambda v: SOLAR_GAIN_C * v,
                 precool_lead_minutes,
             )
+            # Only the part of the coming sun gain that would carry indoor
+            # past target is worth backing off for: a house already below
+            # target has that much room to absorb the sun, so the deficit
+            # (as outdoor spoof) is netted off. Unknown indoor -> no netting.
+            if inputs.indoor_data_available and inputs.indoor_temp_c is not None:
+                room_c = max(0.0, params.indoor_target_c - inputs.indoor_temp_c)
+                sun_precool_raw_c -= room_c * params.spoof_per_indoor_c
             sun_precool_c = _clamp(sun_precool_raw_c, 0.0, SOLAR_PRECOOL_MAX_C)
             sun_precool_in_min = None if sun_h is None else sun_h * 60.0
 

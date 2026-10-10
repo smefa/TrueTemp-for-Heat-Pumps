@@ -97,6 +97,7 @@ export const STRINGS = {
   explainIndoorNowMulti: "Indoor temperature aggregated ({mode}) from {usable} of {total} configured sensors: {list}.",
   indoorModeAverage: "average",
   indoorModeLowest: "lowest",
+  indoorModeHighest: "highest",
   explainSetTemp: "The thermostat's configured indoor setpoint.",
   explainSun: "Temperature adjustment calculated from cloud and sunshine forecast data.",
   explainWind: "Temperature adjustment calculated from wind forecast data.",

@@ -552,7 +552,9 @@ class TrueTempCard extends HTMLElement {
     const indoorConfigured = Number(indoorCount.configured) || 0;
     const indoorUsable = Number(indoorCount.usable) || 0;
     const indoorMulti = indoorConfigured > 1;
-    const indoorModeLabel = attrs.indoor_aggregation_mode === "lowest" ? t.indoorModeLowest : t.indoorModeAverage;
+    const indoorModeLabel = attrs.indoor_aggregation_mode === "lowest" ? t.indoorModeLowest
+      : attrs.indoor_aggregation_mode === "highest" ? t.indoorModeHighest
+      : t.indoorModeAverage;
     const indoorValue = this._num(attrs.indoor_temp_c, 1, " °C");
     const indoorList = Object.entries(attrs.indoor_sensor_readings || {})
       .map(([entityId, value]) => {

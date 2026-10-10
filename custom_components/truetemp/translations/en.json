@@ -18,7 +18,7 @@
         "data_description": {
           "indoor_temp_sensor": "Pick a sensor in a room you actually live in, away from direct sun and draughts. This becomes the zone's primary sensor — its identity, and, if you add extra sensors below, the one member of the average that never drops out. Everything is learned from the combined reading, so a cupboard or a basement will teach it the wrong house.",
           "indoor_temp_sensors_extra": "Optional, up to four more. Combined with the sensor above using the mode below — useful for a house where one room runs colder than the rest, or to stop a single sensor's glitches from being read as a real temperature change.",
-          "indoor_aggregation": "Average takes the mean of every reporting sensor. Lowest heats to the coldest room — the house settles with every other room above target, and the price-saving floor then protects that coldest room instead of the average one. Only matters once you've added extra sensors above.",
+          "indoor_aggregation": "Average takes the mean of every reporting sensor. Lowest heats to the coldest room — the house settles with every other room above target, and the price-saving floor then protects that coldest room instead of the average one. Highest stops heating once the warmest room is comfortable — colder rooms will stay below target, so use it with care. Only matters once you've added extra sensors above.",
           "outdoor_temp_sensor": "A real outdoor sensor if you have one — it is usually more accurate than a weather service estimate.",
           "weather_entity": "Optional. Used for the sun and wind forecast. You can add or change this later.",
           "nordpool_price_entity": "Optional. A Nordpool sensor with today's and tomorrow's hourly prices, needed to save money on electricity. You can add or change this later.",
@@ -85,7 +85,7 @@
         "data_description": {
           "indoor_temp_sensor": "Pick a sensor in a room you actually live in, away from direct sun and draughts. This is the zone's primary sensor — its identity, and, if you add extra sensors below, the one member of the average that never drops out. Everything is learned from the combined reading, so a cupboard or a basement will teach it the wrong house.",
           "indoor_temp_sensors_extra": "Optional, up to four more. Combined with the sensor above using the mode below — useful for a house where one room runs colder than the rest, or to stop a single sensor's glitches from being read as a real temperature change.",
-          "indoor_aggregation": "Average takes the mean of every reporting sensor. Lowest heats to the coldest room — the house settles with every other room above target, and the price-saving floor then protects that coldest room instead of the average one. Only matters once you've added extra sensors above.",
+          "indoor_aggregation": "Average takes the mean of every reporting sensor. Lowest heats to the coldest room — the house settles with every other room above target, and the price-saving floor then protects that coldest room instead of the average one. Highest stops heating once the warmest room is comfortable — colder rooms will stay below target, so use it with care. Only matters once you've added extra sensors above.",
           "outdoor_temp_sensor": "A real outdoor sensor if you have one — it is usually more accurate than a weather service estimate.",
           "heating_type": "Only used for the first few days. After that, TrueTemp has measured how quickly your house responds and stops relying on this answer.",
           "enable_data_logging": "Writes one line per cycle to a file in your config folder. Nothing leaves your machine. Useful if you ever want to check how well it has been doing."
@@ -154,11 +154,11 @@
         "title": "The heat pump's own offset",
         "description": "For pumps that let you set \"heat curve or outdoor temp offset\" directly, instead of faking the outdoor sensor.",
         "data": {
-          "heat_curve_offset_entity": "Number or Input Number entity",
+          "heat_curve_offset_entity": "Number, Input Number or Climate entity",
           "heat_curve_offset_invert": "This pump's offset works the other way round"
         },
         "data_description": {
-          "heat_curve_offset_invert": "Leave off if a higher number on your pump means more heat, which is the case for most pumps. Switch on if it is the other way round for yours."
+          "heat_curve_offset_invert": "Off if a higher number means more heat (most pumps). On if a higher number means less heat."
         }
       },
       "output_indoor_climate": {
@@ -334,7 +334,8 @@
     "indoor_aggregation": {
       "options": {
         "average": "Average",
-        "lowest": "Lowest (coldest room)"
+        "lowest": "Lowest (coldest room)",
+        "highest": "Highest (warmest room)"
       }
     },
     "output_mode": {
@@ -373,6 +374,14 @@
     "price_unavailable": {
       "title": "TrueTemp ({name}) has lost its electricity price",
       "description": "{entity_id} is unavailable, so price-based saving is contributing nothing this cycle."
+    },
+    "heat_curve_offset_missing": {
+      "title": "{name}: heat pump offset entity not found",
+      "description": "`{entity_id}` no longer exists, so TrueTemp can't send the offset to the heat pump and is not compensating.\n\nSelect the entity again in the zone's settings. This won't clear on its own."
+    },
+    "heat_curve_offset_unavailable": {
+      "title": "{name}: heat pump offset entity unavailable",
+      "description": "`{entity_id}` is unavailable, so TrueTemp can't send the offset to the heat pump right now.\n\nThis clears itself once the entity is back."
     }
   },
   "exceptions": {

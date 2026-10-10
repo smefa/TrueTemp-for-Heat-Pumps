@@ -78,13 +78,10 @@ class TestSolarEffectOf:
         peaked here instead."""
         assert heuristic.solar_effect_of(90.0, 180.0, 0.0) == pytest.approx(0.0, abs=1e-9)
 
-    def test_full_cloud_cover_still_passes_diffuse_light(self):
-        """Overcast discounts hard but doesn't zero out — diffuse light still
-        gets through."""
-        clear = heuristic.solar_effect_of(45.0, 180.0, 0.0)
+    def test_full_cloud_cover_gives_no_solar_effect(self):
+        """Full overcast means no sun, so no solar addition."""
         overcast = heuristic.solar_effect_of(45.0, 180.0, 100.0)
-        assert overcast == pytest.approx(clear * 0.25)
-        assert overcast > 0.0
+        assert overcast == pytest.approx(0.0, abs=1e-9)
 
     def test_missing_cloud_data_is_treated_as_clear(self):
         """Same "assume clear" behaviour `compute()` documents for a missing
@@ -350,7 +347,7 @@ class TestComposition:
             make_inputs(sun_elevation_deg=45.0, cloud_coverage_pct=100.0), make_params()
         )
         assert clear.sun_adjustment_c > overcast.sun_adjustment_c
-        assert overcast.sun_adjustment_c > 0.0
+        assert overcast.sun_adjustment_c == pytest.approx(0.0, abs=1e-9)
 
     def test_night_contributes_no_solar(self):
         result = compute(make_inputs(sun_elevation_deg=-20.0), make_params())
@@ -1813,14 +1810,14 @@ class TestSunPreCool:
     def test_a_rise_inside_the_window_precools(self):
         result = compute(
             make_inputs(
-                solar_forecast=((0.0, 0.0), (1.0, 1.0)),
+                solar_forecast=((0.0, 0.0), (1.0, 0.5)),
                 fall_minutes=120.0,
             ),
             lookahead_params(enable_solar_input=True),
         )
-        # 3 degC more sun-equivalent at t=1 h inside a 2 h fall window:
-        # SOLAR_GAIN_C * (1 - 0.5).
-        assert result.sun_precool_c == pytest.approx(SOLAR_GAIN_C * 0.5)
+        # Half sun-equivalent at t=1 h inside a 2 h fall window:
+        # SOLAR_GAIN_C * 0.5 * (1 - 0.5).
+        assert result.sun_precool_c == pytest.approx(SOLAR_GAIN_C * 0.25)
         assert result.sun_precool_in_min == pytest.approx(60.0)
 
     def test_the_same_rise_beyond_the_fall_time_does_nothing(self):
@@ -1877,11 +1874,11 @@ class TestSunPreCool:
     def test_the_precool_reaches_the_published_value(self):
         without = compute(make_inputs(), make_params())
         with_precool = compute(
-            make_inputs(solar_forecast=((0.0, 0.0), (1.0, 1.0)), fall_minutes=120.0),
+            make_inputs(solar_forecast=((0.0, 0.0), (1.0, 0.5)), fall_minutes=120.0),
             lookahead_params(enable_solar_input=True),
         )
         assert with_precool.compensated_outdoor_temp_c == pytest.approx(
-            without.compensated_outdoor_temp_c + SOLAR_GAIN_C * 0.5
+            without.compensated_outdoor_temp_c + SOLAR_GAIN_C * 0.25
         )
 
     def test_precool_clamps_to_its_own_budget(self):
@@ -1902,6 +1899,42 @@ class TestSunPreCool:
         assert result.sun_precool_c == 0.0
         assert result.sun_precool_in_min is None
 
+    def test_indoor_deficit_is_netted_off_the_precool(self):
+        # Unnetted pre-cool is SOLAR_GAIN_C * 0.25 = 1.75; 1 degC of room
+        # at spoof_per_indoor_c=1.0 absorbs 1.0 of it.
+        result = compute(
+            make_inputs(
+                indoor_temp_c=20.0,
+                solar_forecast=((0.0, 0.0), (1.0, 0.5)),
+                fall_minutes=120.0,
+            ),
+            lookahead_params(enable_solar_input=True),
+        )
+        assert result.sun_precool_c == pytest.approx(SOLAR_GAIN_C * 0.25 - 1.0)
+
+    def test_a_large_deficit_cancels_the_precool_and_unfreezes(self):
+        result = compute(
+            make_inputs(
+                indoor_temp_c=19.0,
+                solar_forecast=((0.0, 0.0), (1.0, 0.5)),
+                fall_minutes=120.0,
+            ),
+            lookahead_params(enable_solar_input=True),
+        )
+        assert result.sun_precool_c == 0.0
+        assert not result.sun_precool_active
+
+    def test_indoor_above_target_does_not_add_to_the_precool(self):
+        result = compute(
+            make_inputs(
+                indoor_temp_c=23.0,
+                solar_forecast=((0.0, 0.0), (1.0, 0.5)),
+                fall_minutes=120.0,
+            ),
+            lookahead_params(enable_solar_input=True),
+        )
+        assert result.sun_precool_c == pytest.approx(SOLAR_GAIN_C * 0.25)
+
 
 class TestSunPreCoolFreezesLearner:
     def test_flag_set_above_eps(self):
@@ -1915,7 +1948,7 @@ class TestSunPreCoolFreezesLearner:
 
     def test_flag_clear_below_eps(self):
         result = compute(
-            make_inputs(solar_forecast=((0.0, 0.0), (1.0, 0.06)), fall_minutes=120.0),
+            make_inputs(solar_forecast=((0.0, 0.0), (1.0, 0.05)), fall_minutes=120.0),
             lookahead_params(enable_solar_input=True),
         )
         assert 0.0 < abs(result.sun_precool_c) <= WEATHER_PRERAMP_EPS_C

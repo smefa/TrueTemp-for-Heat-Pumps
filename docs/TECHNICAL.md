@@ -214,6 +214,8 @@ sees:
   the average room then settles above target, and the price-saving floor
   (`comfort_min_c`) ends up protecting the coldest room instead of the
   average one.
+- **Highest** — the maximum. Heating stops once the warmest room is
+  comfortable; colder rooms stay below target, so use it deliberately.
 
 Only sensors currently reporting a usable number are aggregated, so losing
 one out of three does not stop the house — it just aggregates over the
@@ -465,7 +467,7 @@ that would fill it is switched off — see the module docstring in `sensor.py`.
 | `indoor_sensor_ok` | Indoor reading available this cycle. |
 | `indoor_sensor_count` | `{usable, configured}` — how many of the configured indoor sensors are currently reporting. |
 | `indoor_sensor_readings` | Entity id → °C for every configured indoor sensor currently reporting. |
-| `indoor_aggregation_mode` | `average` or `lowest` — how multiple indoor sensors are combined. See [Multiple indoor sensors](#multiple-indoor-sensors). |
+| `indoor_aggregation_mode` | `average`, `lowest` or `highest` — how multiple indoor sensors are combined. See [Multiple indoor sensors](#multiple-indoor-sensors). |
 | `wind_forecast_ok` | Present only if wind input is enabled. Weather-entity forecast had a wind reading. |
 | `cloud_sun_forecast_ok` | Present only if sun input is enabled. Weather-entity forecast had a cloud reading. |
 | `price_ok` | Present only if a price sensor is configured. Today's/tomorrow's forecast was readable. |

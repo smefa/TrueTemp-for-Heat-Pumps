@@ -13,6 +13,7 @@ from __future__ import annotations
 
 MODE_AVERAGE = "average"
 MODE_LOWEST = "lowest"
+MODE_HIGHEST = "highest"
 
 
 def aggregate(readings: list[float], mode: str) -> float | None:
@@ -21,4 +22,6 @@ def aggregate(readings: list[float], mode: str) -> float | None:
         return None
     if mode == MODE_LOWEST:
         return min(readings)
+    if mode == MODE_HIGHEST:
+        return max(readings)
     return sum(readings) / len(readings)
