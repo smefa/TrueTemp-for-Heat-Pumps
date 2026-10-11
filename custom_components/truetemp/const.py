@@ -34,6 +34,12 @@ CONF_INDOOR_TEMP_SENSORS_EXTRA = "indoor_temp_sensors_extra"
 # comfortable. See docs/plan_multi_indoor_sensor.md §2.2 for why no other mode.
 CONF_INDOOR_AGGREGATION = "indoor_aggregation"
 CONF_OUTDOOR_TEMP_SENSOR = "outdoor_temp_sensor"
+# Hours the outdoor sensor may go without reporting before it is treated as
+# failed (same path as `unavailable`, so the OhmOnWifi relay failsafe fires).
+# 0 disables the check. Judged on `last_reported`, not `last_changed`, so a
+# sensor that legitimately holds one value for hours but keeps reporting is
+# still healthy; only one that has stopped reporting altogether trips it.
+CONF_OUTDOOR_SENSOR_MAX_AGE_HOURS = "outdoor_sensor_max_age_hours"
 CONF_WEATHER_ENTITY = "weather_entity"
 CONF_NORDPOOL_PRICE_ENTITY = "nordpool_price_entity"
 
@@ -165,6 +171,7 @@ KNOWN_CONFIG_KEYS = frozenset(
         CONF_INDOOR_TEMP_SENSORS_EXTRA,
         CONF_INDOOR_AGGREGATION,
         CONF_OUTDOOR_TEMP_SENSOR,
+        CONF_OUTDOOR_SENSOR_MAX_AGE_HOURS,
         CONF_WEATHER_ENTITY,
         CONF_NORDPOOL_PRICE_ENTITY,
         CONF_OUTPUT_MODE,
@@ -206,6 +213,9 @@ DEFAULT_ENABLE_WIND_INPUT = False
 # silently change what an existing install publishes.
 DEFAULT_ENABLE_WEATHER_LOOKAHEAD = False
 DEFAULT_ENABLE_DATA_LOGGING = False
+# Off, same reason as the toggles above: an upgrade must not start failing a
+# sensor that used to be accepted.
+DEFAULT_OUTDOOR_SENSOR_MAX_AGE_HOURS = 0
 DEFAULT_OUTPUT_MODE = OUTPUT_MODE_OUTDOOR_SPOOF
 DEFAULT_HEAT_CURVE_OFFSET_INVERT = False
 

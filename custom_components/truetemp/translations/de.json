@@ -79,6 +79,7 @@
           "indoor_temp_sensors_extra": "Zusätzliche Innensensoren",
           "indoor_aggregation": "Wie mehrere Sensoren kombiniert werden",
           "outdoor_temp_sensor": "Außentemperatursensor",
+          "outdoor_sensor_max_age_hours": "Außensensor als ausgefallen behandeln nach (Stunden)",
           "heating_type": "Wie die Wärme in den Raum gelangt",
           "enable_data_logging": "Detailliertes lokales Protokoll führen"
         },
@@ -87,6 +88,7 @@
           "indoor_temp_sensors_extra": "Optional, bis zu vier weitere. Werden mit dem obigen Sensor über den Modus unten kombiniert — nützlich für ein Haus, in dem ein Raum durchgehend kälter ist als der Rest, oder um zu verhindern, dass Ausreißer eines einzelnen Sensors als echte Temperaturänderung gelesen werden.",
           "indoor_aggregation": "Durchschnitt bildet den Mittelwert aller meldenden Sensoren. Niedrigster heizt auf den kältesten Raum — das Haus pendelt sich mit jedem anderen Raum über dem Ziel ein, und die Preisersparnis-Untergrenze schützt dann diesen kältesten statt des durchschnittlichen Raums. Höchster hört auf zu heizen, sobald der wärmste Raum angenehm ist — kältere Räume bleiben unter dem Ziel, daher mit Vorsicht verwenden. Wirkt sich erst aus, sobald oben zusätzliche Sensoren hinzugefügt wurden.",
           "outdoor_temp_sensor": "Ein echter Außensensor, falls vorhanden — er ist meist genauer als die Schätzung eines Wetterdienstes.",
+          "outdoor_sensor_max_age_hours": "Hat der Außensensor so viele Stunden nichts gemeldet, gilt er als ausgefallen, und das OhmOnWifi-Gerät schaltet auf den echten externen Sensor zurück. 0 schaltet die Prüfung aus. Ein Sensor, der weiter denselben Wert meldet, gilt als aktiv; nur ein Sensor, der nicht mehr meldet, löst dies aus.",
           "heating_type": "Wird nur für die ersten Tage genutzt. Danach hat TrueTemp gemessen, wie schnell dein Haus reagiert, und verlässt sich nicht mehr auf diese Angabe.",
           "enable_data_logging": "Schreibt pro Zyklus eine Zeile in eine Datei in deinem Konfigurationsordner. Es verlässt nichts deinen Rechner. Nützlich, um zu prüfen, wie gut das System funktioniert hat."
         }

@@ -66,6 +66,7 @@ from .const import (
     CONF_INDOOR_TEMP_SENSORS_EXTRA,
     CONF_NORDPOOL_PRICE_ENTITY,
     CONF_OHMONWIFI_HOST,
+    CONF_OUTDOOR_SENSOR_MAX_AGE_HOURS,
     CONF_OUTDOOR_TEMP_SENSOR,
     CONF_OUTPUT_MODE,
     CONF_OUTPUT_NUMBER_ENTITY,
@@ -77,6 +78,7 @@ from .const import (
     DEFAULT_ENABLE_PRICE_COMPENSATION,
     DEFAULT_ENABLE_SOLAR_INPUT,
     DEFAULT_ENABLE_WIND_INPUT,
+    DEFAULT_OUTDOOR_SENSOR_MAX_AGE_HOURS,
     DEFAULT_ENABLE_WEATHER_LOOKAHEAD,
     DEFAULT_HEAT_CURVE_OFFSET_INVERT,
     DEFAULT_INDOOR_AGGREGATION,
@@ -818,6 +820,26 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
             not is_weather and state.state == STATE_UNKNOWN
         ):
             raise UpdateFailed(f"Outdoor temperature sensor {entity_id} is unavailable")
+        max_age_hours = float(
+            _entry_value(
+                self.entry,
+                CONF_OUTDOOR_SENSOR_MAX_AGE_HOURS,
+                DEFAULT_OUTDOOR_SENSOR_MAX_AGE_HOURS,
+            )
+            or 0
+        )
+        if max_age_hours > 0:
+            # `last_reported` moves on every report even when the value is
+            # unchanged, so a steady-but-alive sensor passes; `last_changed`
+            # would wrongly fail it.
+            last_seen = getattr(state, "last_reported", None) or state.last_updated
+            age = dt_util.utcnow() - last_seen
+            if age > timedelta(hours=max_age_hours):
+                raise UpdateFailed(
+                    f"Outdoor temperature sensor {entity_id} has not reported "
+                    f"for {age.total_seconds() / 3600:.1f} h "
+                    f"(limit {max_age_hours:g} h)"
+                )
         value = _as_float(state, "temperature" if is_weather else None)
         if value is None:
             raise UpdateFailed(

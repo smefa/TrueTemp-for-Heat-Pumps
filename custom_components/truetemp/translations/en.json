@@ -79,6 +79,7 @@
           "indoor_temp_sensors_extra": "Extra indoor sensors",
           "indoor_aggregation": "How to combine multiple sensors",
           "outdoor_temp_sensor": "Outdoor temperature sensor",
+          "outdoor_sensor_max_age_hours": "Treat outdoor sensor as failed after (hours)",
           "heating_type": "How the heat gets into the room",
           "enable_data_logging": "Keep a detailed local log"
         },
@@ -87,6 +88,7 @@
           "indoor_temp_sensors_extra": "Optional, up to four more. Combined with the sensor above using the mode below — useful for a house where one room runs colder than the rest, or to stop a single sensor's glitches from being read as a real temperature change.",
           "indoor_aggregation": "Average takes the mean of every reporting sensor. Lowest heats to the coldest room — the house settles with every other room above target, and the price-saving floor then protects that coldest room instead of the average one. Highest stops heating once the warmest room is comfortable — colder rooms will stay below target, so use it with care. Only matters once you've added extra sensors above.",
           "outdoor_temp_sensor": "A real outdoor sensor if you have one — it is usually more accurate than a weather service estimate.",
+          "outdoor_sensor_max_age_hours": "If the outdoor sensor has not reported for this many hours it is treated as failed, and the OhmOnWifi device falls back to the real external sensor. 0 switches the check off. A sensor that keeps reporting the same value counts as alive; only one that has stopped reporting trips this.",
           "heating_type": "Only used for the first few days. After that, TrueTemp has measured how quickly your house responds and stops relying on this answer.",
           "enable_data_logging": "Writes one line per cycle to a file in your config folder. Nothing leaves your machine. Useful if you ever want to check how well it has been doing."
         }
