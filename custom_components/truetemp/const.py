@@ -219,6 +219,31 @@ DEFAULT_OUTDOOR_SENSOR_MAX_AGE_HOURS = 0
 DEFAULT_OUTPUT_MODE = OUTPUT_MODE_OUTDOOR_SPOOF
 DEFAULT_HEAT_CURVE_OFFSET_INVERT = False
 
+# Heat-curve notice: shown when the learned offset has sat at the end of its
+# full range, with the house still off target, for this long.
+CURVE_LIMIT_NOTIFY_HOURS = 6
+# How close to the range end counts as "at the limit", and how far off target
+# the house must be for the notice to make sense.
+CURVE_LIMIT_MARGIN_C = 0.05
+CURVE_LIMIT_ERROR_C = 0.3
+CURVE_LIMIT_TITLE = "TrueTemp: heat pump curve needs adjusting"
+_CURVE_LIMIT_ADVICE = (
+    "\n\nThe heat pump's own heating curve seems to be set incorrectly. "
+    "Please review and adjust it, so TrueTemp can work closer to zero offset "
+    "again.\n\nThis notice clears itself when the offset is back within its "
+    "normal range."
+)
+CURVE_LIMIT_MESSAGE_MAX = (
+    "TrueTemp has been at its maximum offset (+{offset:.1f}°C) for {hours} "
+    "hours, and the house still isn't reaching the target ({current:.1f}°C, "
+    "target {target:.1f}°C)." + _CURVE_LIMIT_ADVICE
+)
+CURVE_LIMIT_MESSAGE_MIN = (
+    "TrueTemp has been at its minimum offset ({offset:.1f}°C) for {hours} "
+    "hours, and the house is still warmer than the target ({current:.1f}°C, "
+    "target {target:.1f}°C)." + _CURVE_LIMIT_ADVICE
+)
+
 # The controller runs on a fixed cadence rather than a configurable one. The
 # 2026-08-07 validation traced its single largest data-quality failure to the
 # estimator being stepped on every event-driven refresh (median 6.6 min, 11% of

@@ -32,6 +32,7 @@ from datetime import datetime, timedelta
 import aiohttp
 from astral.sun import azimuth as astral_azimuth
 from astral.sun import elevation as astral_elevation
+from homeassistant.components import persistent_notification
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     ATTR_TEMPERATURE,
@@ -50,6 +51,12 @@ from homeassistant.util import dt as dt_util
 from homeassistant.util.unit_conversion import SpeedConverter, TemperatureConverter
 
 from .const import (
+    CURVE_LIMIT_ERROR_C,
+    CURVE_LIMIT_MARGIN_C,
+    CURVE_LIMIT_MESSAGE_MAX,
+    CURVE_LIMIT_MESSAGE_MIN,
+    CURVE_LIMIT_NOTIFY_HOURS,
+    CURVE_LIMIT_TITLE,
     CONF_COMFORT_MIN_C,
     CONF_ENABLE_DATA_LOGGING,
     CONF_ENABLE_PRICE_COMPENSATION,
@@ -130,6 +137,7 @@ from .lag import (
     push as lag_push,
 )
 from .learner import (
+    MAX_AUTHORITY_C,
     SPOOF_PER_INDOOR_C,
     TAU_I_LAG_MULTIPLE,
     LearnerInputs,
@@ -396,6 +404,13 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
         self._last_output_number_pushed_at: datetime | None = None
         self._last_heat_curve_offset_pushed_at: datetime | None = None
         self._last_indoor_climate_pushed_at: datetime | None = None
+        # Which end of the offset range the learner has been pinned against
+        # ("max" / "min") and since when, plus whether this episode has
+        # already been notified so a dismissed notice stays dismissed.
+        self._curve_limit_side: str | None = None
+        self._curve_limit_since: datetime | None = None
+        self._curve_limit_notified = False
+        self._curve_limit_last_check: datetime | None = None
         # Whether this integration switched the OhmOnWifi device's relay to
         # bypass because the outdoor sensor it spoofs from went unavailable —
         # see `_async_ohmonwifi_relay_failsafe`. Tracked so recovery only
@@ -730,6 +745,86 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
         Repair raised while broken outlives the integration that raised it."""
         for key in self._SOURCE_ISSUE_KEYS:
             ir.async_delete_issue(self.hass, DOMAIN, f"{key}_{self.entry.entry_id}")
+        persistent_notification.async_dismiss(
+            self.hass, self._curve_limit_notification_id
+        )
+
+    @property
+    def _curve_limit_notification_id(self) -> str:
+        return f"{DOMAIN}_curve_limit_{self.entry.entry_id}"
+
+    def _sync_curve_limit_notification(
+        self,
+        learner: LearnerResult | None,
+        indoor_temp_c: float | None,
+        indoor_ok: bool,
+    ) -> None:
+        """Tell the user to review the heat pump's own curve once the learner
+        has been pinned at its full offset range for a long time while the
+        house still misses the target — more offset cannot fix that.
+
+        Heating is the negative direction, so a floor-pinned offset with a
+        cold house is the "maximum" case and a ceiling-pinned one with a warm
+        house the "minimum" case. Shown once per episode; leaving the limit
+        (or the house reaching target) clears it and re-arms it."""
+        now = dt_util.utcnow()
+        # A cycle that never reached this point (a source failure) breaks the
+        # episode: the hours must be continuous observed hours at the limit.
+        last_check = self._curve_limit_last_check
+        self._curve_limit_last_check = now
+        gap_too_long = last_check is not None and now - last_check > timedelta(
+            minutes=UPDATE_INTERVAL_MINUTES * 2.5
+        )
+        if gap_too_long:
+            self._curve_limit_since = None
+
+        side: str | None = None
+        if (
+            self.is_active
+            and learner is not None
+            and indoor_ok
+            and indoor_temp_c is not None
+        ):
+            at_full_range = learner.authority_c >= MAX_AUTHORITY_C - 1e-9
+            error_c = self._effective_target_c - indoor_temp_c
+            if at_full_range and learner.offset_c <= -MAX_AUTHORITY_C + CURVE_LIMIT_MARGIN_C:
+                side = "max" if error_c > CURVE_LIMIT_ERROR_C else None
+            elif at_full_range and learner.offset_c >= MAX_AUTHORITY_C - CURVE_LIMIT_MARGIN_C:
+                side = "min" if error_c < -CURVE_LIMIT_ERROR_C else None
+
+        if side is None:
+            if self._curve_limit_side is not None:
+                persistent_notification.async_dismiss(
+                    self.hass, self._curve_limit_notification_id
+                )
+            self._curve_limit_side = None
+            self._curve_limit_since = None
+            self._curve_limit_notified = False
+            return
+
+        if side != self._curve_limit_side or self._curve_limit_since is None:
+            self._curve_limit_side = side
+            self._curve_limit_since = now
+            self._curve_limit_notified = False
+            return
+        if self._curve_limit_notified or now - self._curve_limit_since < timedelta(
+            hours=CURVE_LIMIT_NOTIFY_HOURS
+        ):
+            return
+
+        assert learner is not None and indoor_temp_c is not None
+        persistent_notification.async_create(
+            self.hass,
+            (CURVE_LIMIT_MESSAGE_MAX if side == "max" else CURVE_LIMIT_MESSAGE_MIN).format(
+                offset=-abs(learner.offset_c) if side == "min" else abs(learner.offset_c),
+                hours=CURVE_LIMIT_NOTIFY_HOURS,
+                current=indoor_temp_c,
+                target=self._effective_target_c,
+            ),
+            title=CURVE_LIMIT_TITLE,
+            notification_id=self._curve_limit_notification_id,
+        )
+        self._curve_limit_notified = True
 
     # --- Source reads --------------------------------------------------------
 
@@ -1535,6 +1630,10 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
             sun_elevation_deg,
             sun_azimuth_deg,
             cloud_coverage_pct,
+        )
+
+        self._sync_curve_limit_notification(
+            self.learner_result, indoor_temp_c, indoor_ok
         )
 
         lag = self._lag_result()
