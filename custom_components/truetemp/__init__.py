@@ -26,6 +26,7 @@ from .const import (
     KNOWN_CONFIG_KEYS,
 )
 from .coordinator import TrueTempCoordinator
+from .frontend_resources import async_remove_resource, async_sync_resource
 from .services import async_register_services
 
 PLATFORMS = [
@@ -40,6 +41,8 @@ type TrueTempConfigEntry = ConfigEntry[TrueTempCoordinator]
 _LOGGER = logging.getLogger(__name__)
 
 _FRONTEND_REGISTERED = f"{DOMAIN}_frontend_registered"
+
+_DASHBOARD_RESOURCE_URL = f"{FRONTEND_DASHBOARD_URL}?v={FRONTEND_DASHBOARD_JS_VERSION}"
 
 
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -82,11 +85,14 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def _async_register_frontend(hass: HomeAssistant) -> None:
-    """Serve the bundled demo Lovelace card and auto-add it as a resource.
+    """Serve the bundled cards and dashboard strategy and load them on every page.
 
     The whole www/ directory is registered, not just truetemp-card.js: the
     card `import`s its per-language strings from www/lang/*.js, and those
     files need to be reachable at their own URLs for that to resolve.
+
+    The dashboard strategy is also listed in the Lovelace resources; see
+    frontend_resources.py for why the index page alone is not enough for it.
 
     Guarded by a hass.data flag rather than being tied to one config entry:
     a second TrueTemp zone would otherwise try to register the same
@@ -101,11 +107,46 @@ async def _async_register_frontend(hass: HomeAssistant) -> None:
     )
     add_extra_js_url(hass, f"{FRONTEND_CARD_URL}?v={FRONTEND_JS_VERSION}")
     add_extra_js_url(hass, f"{FRONTEND_VACATION_CARD_URL}?v={FRONTEND_VACATION_JS_VERSION}")
-    add_extra_js_url(hass, f"{FRONTEND_DASHBOARD_URL}?v={FRONTEND_DASHBOARD_JS_VERSION}")
+    add_extra_js_url(hass, _DASHBOARD_RESOURCE_URL)
+
+
+def _storage_resources(hass: HomeAssistant):
+    """The Lovelace resources collection, or None when it isn't UI-managed.
+
+    Read through hass.data rather than an import: Lovelace exposes no API for
+    integrations to edit resources, and the shape of its hass.data entry has
+    changed between releases. A YAML-mode collection has no create method.
+    """
+    resources = getattr(hass.data.get("lovelace"), "resources", None)
+    return resources if hasattr(resources, "async_create_item") else None
+
+
+async def _async_sync_dashboard_resource(hass: HomeAssistant) -> None:
+    resources = _storage_resources(hass)
+    if resources is None:
+        _LOGGER.info(
+            "Lovelace resources are managed in YAML, so TrueTemp can't list its dashboard "
+            "there. If the TrueTemp dashboard shows 'Timeout waiting for strategy element', "
+            "add this resource (type: module): %s",
+            _DASHBOARD_RESOURCE_URL,
+        )
+        return
+    try:
+        result = await async_sync_resource(resources, _DASHBOARD_RESOURCE_URL)
+    except Exception:  # noqa: BLE001 - a resources problem must never block setup
+        _LOGGER.warning(
+            "Could not add the TrueTemp dashboard to the Lovelace resources", exc_info=True
+        )
+        return
+    if result:
+        _LOGGER.info("Lovelace resource for the TrueTemp dashboard %s", result)
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: TrueTempConfigEntry) -> bool:
     await _async_register_frontend(hass)
+    # Outside the run-once guard above: the entry may have been removed with the
+    # last zone, and a new zone added without a restart has to put it back.
+    await _async_sync_dashboard_resource(hass)
     async_register_services(hass)
     coordinator = TrueTempCoordinator(hass, entry)
     # Restore the learned offset table and lag buffer (if any) BEFORE the first
@@ -144,6 +185,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: TrueTempConfigEntry) -> 
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: TrueTempConfigEntry) -> None:
+    """Take the dashboard resource out again when the last zone is deleted."""
+    if any(e.entry_id != entry.entry_id for e in hass.config_entries.async_entries(DOMAIN)):
+        return
+    resources = _storage_resources(hass)
+    if resources is None:
+        return
+    try:
+        await async_remove_resource(resources, _DASHBOARD_RESOURCE_URL)
+    except Exception:  # noqa: BLE001 - removal is cleanup only
+        _LOGGER.warning("Could not remove the TrueTemp dashboard resource", exc_info=True)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: TrueTempConfigEntry) -> bool:
