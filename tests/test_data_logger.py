@@ -76,8 +76,10 @@ def test_rotate_prunes_rotations_older_than_max_age(tmp_path):
     path = tmp_path / "entry.jsonl"
     fmt = "%Y%m%dT%H%M%SZ"
     now = datetime.now(timezone.utc)
-    too_old = f"entry.{(now - data_logger.MAX_ROTATED_AGE - timedelta(days=1)).strftime(fmt)}.jsonl.gz"
-    recent = f"entry.{(now - data_logger.MAX_ROTATED_AGE + timedelta(days=1)).strftime(fmt)}.jsonl.gz"
+    old_ts = (now - data_logger.MAX_ROTATED_AGE - timedelta(days=1)).strftime(fmt)
+    recent_ts = (now - data_logger.MAX_ROTATED_AGE + timedelta(days=1)).strftime(fmt)
+    too_old = f"entry.{old_ts}.jsonl.gz"
+    recent = f"entry.{recent_ts}.jsonl.gz"
     stray = "entry.notatimestamp.jsonl.gz"
     for name in (too_old, recent, stray):
         with gzip.open(tmp_path / name, "wt", encoding="utf-8") as handle:
