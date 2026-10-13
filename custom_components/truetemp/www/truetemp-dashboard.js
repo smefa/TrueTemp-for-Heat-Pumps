@@ -73,12 +73,23 @@ class TrueTempDashboardStrategy extends HTMLElement {
   }
 }
 
-customElements.define("ll-strategy-dashboard-truetemp", TrueTempDashboardStrategy);
+// Loaded twice by design: from the index page and from the Lovelace resources
+// (see frontend_resources.py). Both use the same URL, so the browser normally
+// runs it once; the guard covers a resource entry with a different ?v=.
+if (!customElements.get("ll-strategy-dashboard-truetemp")) {
+  customElements.define("ll-strategy-dashboard-truetemp", TrueTempDashboardStrategy);
 
-window.customStrategies = window.customStrategies || [];
-window.customStrategies.push({
-  type: "truetemp",
-  strategyType: "dashboard",
-  name: "TrueTemp",
-  description: "One view per TrueTemp zone: what it is doing now, and your vacation plans.",
-});
+  window.customStrategies = window.customStrategies || [];
+  window.customStrategies.push({
+    type: "truetemp",
+    strategyType: "dashboard",
+    name: "TrueTemp",
+    description: "One view per TrueTemp zone: what it is doing now, and your vacation plans.",
+  });
+
+  // The frontend gives a custom strategy 5 s to register, so the timing is
+  // what to look for when a slow device reports the timeout.
+  console.info(
+    `TrueTemp dashboard registered ${Math.round(performance.now())} ms after page start`
+  );
+}

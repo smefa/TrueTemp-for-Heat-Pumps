@@ -34,6 +34,12 @@ CONF_INDOOR_TEMP_SENSORS_EXTRA = "indoor_temp_sensors_extra"
 # comfortable. See docs/plan_multi_indoor_sensor.md §2.2 for why no other mode.
 CONF_INDOOR_AGGREGATION = "indoor_aggregation"
 CONF_OUTDOOR_TEMP_SENSOR = "outdoor_temp_sensor"
+# Hours the outdoor sensor may go without reporting before it is treated as
+# failed (same path as `unavailable`, so the OhmOnWifi relay failsafe fires).
+# 0 disables the check. Judged on `last_reported`, not `last_changed`, so a
+# sensor that legitimately holds one value for hours but keeps reporting is
+# still healthy; only one that has stopped reporting altogether trips it.
+CONF_OUTDOOR_SENSOR_MAX_AGE_HOURS = "outdoor_sensor_max_age_hours"
 CONF_WEATHER_ENTITY = "weather_entity"
 CONF_NORDPOOL_PRICE_ENTITY = "nordpool_price_entity"
 
@@ -165,6 +171,7 @@ KNOWN_CONFIG_KEYS = frozenset(
         CONF_INDOOR_TEMP_SENSORS_EXTRA,
         CONF_INDOOR_AGGREGATION,
         CONF_OUTDOOR_TEMP_SENSOR,
+        CONF_OUTDOOR_SENSOR_MAX_AGE_HOURS,
         CONF_WEATHER_ENTITY,
         CONF_NORDPOOL_PRICE_ENTITY,
         CONF_OUTPUT_MODE,
@@ -206,8 +213,36 @@ DEFAULT_ENABLE_WIND_INPUT = False
 # silently change what an existing install publishes.
 DEFAULT_ENABLE_WEATHER_LOOKAHEAD = False
 DEFAULT_ENABLE_DATA_LOGGING = False
+# Off, same reason as the toggles above: an upgrade must not start failing a
+# sensor that used to be accepted.
+DEFAULT_OUTDOOR_SENSOR_MAX_AGE_HOURS = 0
 DEFAULT_OUTPUT_MODE = OUTPUT_MODE_OUTDOOR_SPOOF
 DEFAULT_HEAT_CURVE_OFFSET_INVERT = False
+
+# Heat-curve notice: shown when the learned offset has sat at the end of its
+# full range, with the house still off target, for this long.
+CURVE_LIMIT_NOTIFY_HOURS = 6
+# How close to the range end counts as "at the limit", and how far off target
+# the house must be for the notice to make sense.
+CURVE_LIMIT_MARGIN_C = 0.05
+CURVE_LIMIT_ERROR_C = 0.3
+CURVE_LIMIT_TITLE = "TrueTemp: heat pump curve needs adjusting"
+_CURVE_LIMIT_ADVICE = (
+    "\n\nThe heat pump's own heating curve seems to be set incorrectly. "
+    "Please review and adjust it, so TrueTemp can work closer to zero offset "
+    "again.\n\nThis notice clears itself when the offset is back within its "
+    "normal range."
+)
+CURVE_LIMIT_MESSAGE_MAX = (
+    "TrueTemp has been at its maximum offset (+{offset:.1f}°C) for {hours} "
+    "hours, and the house still isn't reaching the target ({current:.1f}°C, "
+    "target {target:.1f}°C)." + _CURVE_LIMIT_ADVICE
+)
+CURVE_LIMIT_MESSAGE_MIN = (
+    "TrueTemp has been at its minimum offset ({offset:.1f}°C) for {hours} "
+    "hours, and the house is still warmer than the target ({current:.1f}°C, "
+    "target {target:.1f}°C)." + _CURVE_LIMIT_ADVICE
+)
 
 # The controller runs on a fixed cadence rather than a configurable one. The
 # 2026-08-07 validation traced its single largest data-quality failure to the
@@ -254,4 +289,4 @@ FRONTEND_VACATION_JS_VERSION = "3"
 # Dashboard strategy ("Community dashboards" in HA 2026.5+'s new-dashboard
 # dialog). A third independent bundle with its own cache-busting version.
 FRONTEND_DASHBOARD_URL = f"{FRONTEND_STATIC_URL_PREFIX}/truetemp-dashboard.js"
-FRONTEND_DASHBOARD_JS_VERSION = "1"
+FRONTEND_DASHBOARD_JS_VERSION = "2"

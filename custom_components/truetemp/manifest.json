@@ -3,11 +3,11 @@
   "name": "TrueTemp",
   "codeowners": ["@smefa"],
   "config_flow": true,
-  "dependencies": ["http", "frontend"],
+  "dependencies": ["http", "frontend", "lovelace"],
   "documentation": "https://github.com/smefa/TrueTemp-for-Heat-Pumps",
   "integration_type": "service",
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/smefa/TrueTemp-for-Heat-Pumps/issues",
   "requirements": ["astral"],
-  "version": "0.4.9"
+  "version": "0.4.9.1.b1"
 }

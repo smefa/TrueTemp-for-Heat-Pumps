@@ -58,6 +58,7 @@ from .const import (
     CONF_INDOOR_TEMP_SENSORS_EXTRA,
     CONF_NORDPOOL_PRICE_ENTITY,
     CONF_OHMONWIFI_HOST,
+    CONF_OUTDOOR_SENSOR_MAX_AGE_HOURS,
     CONF_OUTDOOR_TEMP_SENSOR,
     CONF_OUTPUT_MODE,
     CONF_OUTPUT_NUMBER_ENTITY,
@@ -69,6 +70,7 @@ from .const import (
     DEFAULT_ENABLE_PRICE_COMPENSATION,
     DEFAULT_ENABLE_SOLAR_INPUT,
     DEFAULT_ENABLE_WIND_INPUT,
+    DEFAULT_OUTDOOR_SENSOR_MAX_AGE_HOURS,
     DEFAULT_ENABLE_WEATHER_LOOKAHEAD,
     DEFAULT_HEAT_CURVE_OFFSET_INVERT,
     DEFAULT_INDOOR_AGGREGATION,
@@ -440,6 +442,21 @@ class TrueTempOptionsFlow(config_entries.OptionsFlow):
                         default=current.get(CONF_OUTDOOR_TEMP_SENSOR),
                     ): selector.EntitySelector(
                         selector.EntitySelectorConfig(domain=["sensor", "weather"])
+                    ),
+                    vol.Required(
+                        CONF_OUTDOOR_SENSOR_MAX_AGE_HOURS,
+                        default=current.get(
+                            CONF_OUTDOOR_SENSOR_MAX_AGE_HOURS,
+                            DEFAULT_OUTDOOR_SENSOR_MAX_AGE_HOURS,
+                        ),
+                    ): selector.NumberSelector(
+                        selector.NumberSelectorConfig(
+                            min=0,
+                            max=72,
+                            step=1,
+                            unit_of_measurement="h",
+                            mode="box",
+                        )
                     ),
                     vol.Required(
                         CONF_HEATING_TYPE,
