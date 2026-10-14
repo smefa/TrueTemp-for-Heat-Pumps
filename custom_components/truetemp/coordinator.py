@@ -1401,6 +1401,28 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
         except Exception as err:  # noqa: BLE001
             _LOGGER.warning("Could not save learned state (ignored): %s", err)
 
+    async def async_reset_learning(self) -> None:
+        """Forget the offset table and the lag buffer; start from a cold learner.
+
+        For after a sensor swap, when the table is calibrated to readings that
+        no longer exist. The price-spread history is kept: it comes from the
+        market, not from any sensor. Written straight to disk, before anything
+        in memory changes, and a write failure is raised to the caller: unlike
+        the best-effort saves, a reset that quietly failed to persist would
+        bring the old table back on the next restart.
+        """
+        fresh_learner = learner_initial_state()
+        fresh_lag = lag_initial_state(UPDATE_INTERVAL_MINUTES)
+        await self._store.async_save(
+            learner_serialize(fresh_learner, fresh_lag, self.price_spread_history)
+        )
+        self.learner_state = fresh_learner
+        self.lag_state = fresh_lag
+        self.learner_result = None
+        self.lag_result = None
+        self._learner_last_step_s = None
+        await self.async_request_refresh()
+
     # --- The cycle -----------------------------------------------------------
 
     async def _async_update_data(self) -> HeuristicResult:

@@ -411,6 +411,11 @@ plan":
 | `truetemp.vacation_plan_remove` | `config_entry_id`, `id` | Deletes a plan by id |
 | `truetemp.vacation_plan_reorder` | `config_entry_id`, `id`, `direction` (`up`/`down`) | Swaps a plan with its neighbour — the only way to change which plan wins an overlap |
 
+`truetemp.reset_learning` (`config_entry_id`) is separate and deliberately has
+no card or entity: run it from Developer Tools → Actions after replacing the
+outdoor or indoor sensor. It resets the offset table and the lag buffer to a
+cold start and saves immediately; the price-spread history is kept.
+
 `vacation_plan_set` runs the same overlap check as the options flow and
 raises a translated `ServiceValidationError` (readable in the Developer
 Tools UI or a failed automation) rather than silently saving an ambiguous

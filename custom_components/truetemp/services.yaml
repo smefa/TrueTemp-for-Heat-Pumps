@@ -106,6 +106,14 @@ vacation_plan_remove:
       selector:
         text:
 
+reset_learning:
+  fields:
+    config_entry_id:
+      required: true
+      selector:
+        config_entry:
+          integration: truetemp
+
 vacation_plan_reorder:
   fields:
     config_entry_id:
