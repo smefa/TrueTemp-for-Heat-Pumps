@@ -91,8 +91,10 @@ async def _async_register_frontend(hass: HomeAssistant) -> None:
     card `import`s its per-language strings from www/lang/*.js, and those
     files need to be reachable at their own URLs for that to resolve.
 
-    The dashboard strategy is also listed in the Lovelace resources; see
-    frontend_resources.py for why the index page alone is not enough for it.
+    The dashboard strategy is deliberately not added to the index page here:
+    it is listed in the Lovelace resources instead (see
+    _async_sync_dashboard_resource), because a strategy that registers before
+    the frontend's own element registry is up is not found by it.
 
     Guarded by a hass.data flag rather than being tied to one config entry:
     a second TrueTemp zone would otherwise try to register the same
@@ -107,7 +109,6 @@ async def _async_register_frontend(hass: HomeAssistant) -> None:
     )
     add_extra_js_url(hass, f"{FRONTEND_CARD_URL}?v={FRONTEND_JS_VERSION}")
     add_extra_js_url(hass, f"{FRONTEND_VACATION_CARD_URL}?v={FRONTEND_VACATION_JS_VERSION}")
-    add_extra_js_url(hass, _DASHBOARD_RESOURCE_URL)
 
 
 def _storage_resources(hass: HomeAssistant):
@@ -122,8 +123,14 @@ def _storage_resources(hass: HomeAssistant):
 
 
 async def _async_sync_dashboard_resource(hass: HomeAssistant) -> None:
+    """List the dashboard script in the Lovelace resources.
+
+    Falls back to the index page (the pre-0.4.9.1 behaviour) when the resources
+    can't be edited, so a YAML-mode setup still gets the script.
+    """
     resources = _storage_resources(hass)
     if resources is None:
+        add_extra_js_url(hass, _DASHBOARD_RESOURCE_URL)
         _LOGGER.info(
             "Lovelace resources are managed in YAML, so TrueTemp can't list its dashboard "
             "there. If the TrueTemp dashboard shows 'Timeout waiting for strategy element', "
@@ -137,6 +144,7 @@ async def _async_sync_dashboard_resource(hass: HomeAssistant) -> None:
         _LOGGER.warning(
             "Could not add the TrueTemp dashboard to the Lovelace resources", exc_info=True
         )
+        add_extra_js_url(hass, _DASHBOARD_RESOURCE_URL)
         return
     if result:
         _LOGGER.info("Lovelace resource for the TrueTemp dashboard %s", result)
