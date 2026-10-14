@@ -390,6 +390,9 @@
     "vacation_service_unknown_entry": {
       "message": "Diese TrueTemp-Zone wurde nicht gefunden."
     },
+    "service_entry_not_loaded": {
+      "message": "Diese TrueTemp-Zone läuft gerade nicht."
+    },
     "vacation_service_missing_fields": {
       "message": "Diesem Plan fehlt ein Feld, das sein Wiederholungstyp benötigt."
     },
@@ -404,6 +407,13 @@
     }
   },
   "services": {
+    "reset_learning": {
+      "name": "Gelernte Daten zurücksetzen",
+      "description": "Löscht, was diese Zone gelernt hat (Offset-Tabelle und Reaktionszeit-Schätzung), und beginnt von vorn. Nach dem Tausch des Außen- oder Innensensors verwenden. Einstellungen und Zeitpläne bleiben erhalten. Kann nicht rückgängig gemacht werden.",
+      "fields": {
+        "config_entry_id": { "name": "Zone", "description": "Welche TrueTemp-Zone zurückgesetzt werden soll." }
+      }
+    },
     "vacation_plan_set": {
       "name": "Urlaubsplan setzen",
       "description": "Einen Urlaubsplan einer TrueTemp-Zone anlegen oder aktualisieren.",

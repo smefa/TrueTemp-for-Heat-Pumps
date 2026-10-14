@@ -42,7 +42,14 @@ _LOGGER = logging.getLogger(__name__)
 
 _FRONTEND_REGISTERED = f"{DOMAIN}_frontend_registered"
 
-_DASHBOARD_RESOURCE_URL = f"{FRONTEND_DASHBOARD_URL}?v={FRONTEND_DASHBOARD_JS_VERSION}"
+# The three bundled scripts. Loaded through the Lovelace resources (like any
+# HACS card) rather than the index page: on the index page they ran before the
+# frontend was ready and were sometimes not found when a dashboard first drew.
+_RESOURCE_URLS = (
+    f"{FRONTEND_CARD_URL}?v={FRONTEND_JS_VERSION}",
+    f"{FRONTEND_VACATION_CARD_URL}?v={FRONTEND_VACATION_JS_VERSION}",
+    f"{FRONTEND_DASHBOARD_URL}?v={FRONTEND_DASHBOARD_JS_VERSION}",
+)
 
 
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -85,16 +92,15 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def _async_register_frontend(hass: HomeAssistant) -> None:
-    """Serve the bundled cards and dashboard strategy and load them on every page.
+    """Serve the bundled cards and dashboard strategy.
 
     The whole www/ directory is registered, not just truetemp-card.js: the
     card `import`s its per-language strings from www/lang/*.js, and those
     files need to be reachable at their own URLs for that to resolve.
 
-    The dashboard strategy is deliberately not added to the index page here:
-    it is listed in the Lovelace resources instead (see
-    _async_sync_dashboard_resource), because a strategy that registers before
-    the frontend's own element registry is up is not found by it.
+    The scripts are deliberately not added to the index page here: they are
+    listed in the Lovelace resources instead (see _async_sync_resources), which
+    loads them from inside the frontend once it is ready.
 
     Guarded by a hass.data flag rather than being tied to one config entry:
     a second TrueTemp zone would otherwise try to register the same
@@ -107,8 +113,6 @@ async def _async_register_frontend(hass: HomeAssistant) -> None:
     await hass.http.async_register_static_paths(
         [StaticPathConfig(FRONTEND_STATIC_URL_PREFIX, str(www_path), cache_headers=True)]
     )
-    add_extra_js_url(hass, f"{FRONTEND_CARD_URL}?v={FRONTEND_JS_VERSION}")
-    add_extra_js_url(hass, f"{FRONTEND_VACATION_CARD_URL}?v={FRONTEND_VACATION_JS_VERSION}")
 
 
 def _storage_resources(hass: HomeAssistant):
@@ -122,39 +126,44 @@ def _storage_resources(hass: HomeAssistant):
     return resources if hasattr(resources, "async_create_item") else None
 
 
-async def _async_sync_dashboard_resource(hass: HomeAssistant) -> None:
-    """List the dashboard script in the Lovelace resources.
+def _add_to_index_page(hass: HomeAssistant) -> None:
+    for url in _RESOURCE_URLS:
+        add_extra_js_url(hass, url)
 
-    Falls back to the index page (the pre-0.4.9.1 behaviour) when the resources
-    can't be edited, so a YAML-mode setup still gets the script.
+
+async def _async_sync_resources(hass: HomeAssistant) -> None:
+    """List the bundled scripts in the Lovelace resources.
+
+    Falls back to the index page (the behaviour before 0.4.9.1) when the
+    resources can't be edited, so a YAML-mode setup still gets the scripts.
     """
     resources = _storage_resources(hass)
     if resources is None:
-        add_extra_js_url(hass, _DASHBOARD_RESOURCE_URL)
+        _add_to_index_page(hass)
         _LOGGER.info(
-            "Lovelace resources are managed in YAML, so TrueTemp can't list its dashboard "
-            "there. If the TrueTemp dashboard shows 'Timeout waiting for strategy element', "
-            "add this resource (type: module): %s",
-            _DASHBOARD_RESOURCE_URL,
+            "Lovelace resources are managed in YAML, so TrueTemp can't list its scripts "
+            "there. If the TrueTemp cards or dashboard fail to load at first, add these "
+            "resources (type: module): %s",
+            ", ".join(_RESOURCE_URLS),
         )
         return
     try:
-        result = await async_sync_resource(resources, _DASHBOARD_RESOURCE_URL)
+        for url in _RESOURCE_URLS:
+            result = await async_sync_resource(resources, url)
+            if result:
+                _LOGGER.info("Lovelace resource %s %s", url, result)
     except Exception:  # noqa: BLE001 - a resources problem must never block setup
         _LOGGER.warning(
-            "Could not add the TrueTemp dashboard to the Lovelace resources", exc_info=True
+            "Could not add the TrueTemp scripts to the Lovelace resources", exc_info=True
         )
-        add_extra_js_url(hass, _DASHBOARD_RESOURCE_URL)
-        return
-    if result:
-        _LOGGER.info("Lovelace resource for the TrueTemp dashboard %s", result)
+        _add_to_index_page(hass)
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: TrueTempConfigEntry) -> bool:
     await _async_register_frontend(hass)
     # Outside the run-once guard above: the entry may have been removed with the
     # last zone, and a new zone added without a restart has to put it back.
-    await _async_sync_dashboard_resource(hass)
+    await _async_sync_resources(hass)
     async_register_services(hass)
     coordinator = TrueTempCoordinator(hass, entry)
     # Restore the learned offset table and lag buffer (if any) BEFORE the first
@@ -196,16 +205,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: TrueTempConfigEntry) -> 
 
 
 async def async_remove_entry(hass: HomeAssistant, entry: TrueTempConfigEntry) -> None:
-    """Take the dashboard resource out again when the last zone is deleted."""
+    """Take the script resources out again when the last zone is deleted."""
     if any(e.entry_id != entry.entry_id for e in hass.config_entries.async_entries(DOMAIN)):
         return
     resources = _storage_resources(hass)
     if resources is None:
         return
     try:
-        await async_remove_resource(resources, _DASHBOARD_RESOURCE_URL)
+        for url in _RESOURCE_URLS:
+            await async_remove_resource(resources, url)
     except Exception:  # noqa: BLE001 - removal is cleanup only
-        _LOGGER.warning("Could not remove the TrueTemp dashboard resource", exc_info=True)
+        _LOGGER.warning("Could not remove the TrueTemp script resources", exc_info=True)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: TrueTempConfigEntry) -> bool:

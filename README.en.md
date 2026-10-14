@@ -197,6 +197,26 @@ currently active.
 
 ---
 
+## Replaced a sensor?
+
+TrueTemp learns from the readings of your outdoor and indoor sensors. If you
+swap one for a new sensor, a new location, or a sensor that reads noticeably
+differently, what it learned from the old one no longer fits. It will correct
+itself over time, but that can take weeks for outdoor temperatures that don't
+come up often. For a clean start:
+
+1. Go to **Developer Tools → Actions**.
+2. Pick **TrueTemp: Reset learned data** and choose your zone.
+3. Run it.
+
+TrueTemp forgets what it learned and starts over from the cautious beginning,
+with no restart needed. Your settings and schedules are kept. It can't be
+undone, and there is deliberately no button for it, so it can't be pressed by
+accident. If the new sensor reads within about half a degree of the old one,
+you can skip this.
+
+---
+
 ## Want the technical details?
 
 The plain-language version above is the whole story for most people. If

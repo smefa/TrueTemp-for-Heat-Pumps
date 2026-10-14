@@ -205,6 +205,26 @@ plan (om någon) som är aktiv just nu.
 
 ---
 
+## Bytt givare?
+
+TrueTemp lär sig av avläsningarna från dina ute- och innegivare. Byter du en
+givare mot en ny, flyttar den eller får en som visar märkbart annorlunda,
+stämmer det den lärt sig av den gamla inte längre. Den rättar sig själv med
+tiden, men det kan ta veckor för utetemperaturer som sällan förekommer. För
+en ren start:
+
+1. Gå till **Utvecklarverktyg → Åtgärder**.
+2. Välj **TrueTemp: Nollställ inlärd data** och välj din zon.
+3. Kör den.
+
+TrueTemp glömmer det den lärt sig och börjar om från det försiktiga
+startläget, utan omstart. Dina inställningar och scheman behålls. Det går
+inte att ångra, och det finns medvetet ingen knapp för det, så att det inte
+går att trycka på av misstag. Visar den nya givaren inom ungefär en halv
+grad samma värde som den gamla kan du hoppa över det här.
+
+---
+
 ## Vill du ha den tekniska bakgrunden?
 
 Texten ovan är hela historien för de allra flesta. Är du nyfiken på exakt hur
