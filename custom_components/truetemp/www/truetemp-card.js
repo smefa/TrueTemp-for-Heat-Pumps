@@ -676,7 +676,14 @@ class TrueTempCard extends HTMLElement {
       [t.nextSpikeIn, this._num(attrs.upcoming_spike_in_min, 0, " min"), "explainNextSpikeIn"],
       [t.allowedSag, this._num(attrs.allowed_sag_c, 2, " °C"), "explainAllowedSag"],
       [t.coldBrake, this._num(attrs.cold_brake_factor, 2, "×"), "explainColdBrake"],
-      [t.savingLevel, (tier && tier.state) || "—", "explainSavingLevel", this._entities.tier],
+      // The select goes unavailable when price saving is off; show that as
+      // "disabled" like the other price terms, not as the raw "unavailable".
+      [
+        t.savingLevel,
+        priceDisabled || (tier && tier.state === "unavailable") ? DISABLED : (tier && tier.state) || "—",
+        "explainSavingLevel",
+        this._entities.tier,
+      ],
       [t.coldCaution, (caution && caution.state) || "—", "explainColdCaution", this._entities.caution],
       [t.preBrakeLead, this._num(attrs.lead_minutes_effective, 0, " min"), "explainPreBrakeLead"],
     ];
