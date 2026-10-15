@@ -145,6 +145,9 @@ async def async_get_config_entry_diagnostics(
             # since the off->on edge that triggers seeding is detected from this
             # very field on the NEXT cycle.
             "prev_is_active": coordinator.learner_state.prev_is_active,
+            # The whole-house part of the offset. Each band's `hold_offset_c`
+            # below is only its own part on top of this.
+            "shared_offset_c": coordinator.learner_state.shared_offset_c,
             # The whole table. This is the artefact worth having.
             "table": [
                 {

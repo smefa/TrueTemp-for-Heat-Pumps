@@ -29,9 +29,20 @@ at −5 °C, this house needs −2.3 °C of spoofing to hold 21 °C
 ```
 
 That is the whole model. An offset is accumulated by integral action and stored
-per outdoor-temperature band, so the answer at −15 °C is learned separately from
-the answer at +5 °C — which is how a non-linear heat curve gets handled without
-anyone modelling the curve.
+in two parts:
+
+- **A shared part** for the whole house. Most of what is learned goes here, so
+  when something changes everywhere at once — you adjust the pump's curve, or
+  the target — it is picked up within hours and applies at every temperature,
+  not only in the weather it happened to be learned in. It counts in full at
+  5 °C and below and fades out by 10 °C, because mild weather is dominated by
+  sun, cooking and the pump cycling rather than by the curve.
+- **A part per outdoor-temperature band**, so the answer at −15 °C can still
+  differ from the one at +5 °C — which is how a non-linear heat curve gets
+  handled without anyone modelling the curve. Above 10 °C this is the only part.
+
+Neighbouring bands are blended by outdoor temperature, so the published value
+moves smoothly as the weather changes instead of jumping at a band edge.
 
 The published value is that offset plus a few bounded corrections:
 
@@ -271,7 +282,9 @@ Three properties keep it from becoming another thing to tune:
 Both pushes share one 3 °C budget, so a front that fires both of them at once
 cannot stack into an overshoot. While the pre-ramp is acting, learning pauses
 (`learning_paused_because` says so), because the house is deliberately being
-held above target and the learner must not integrate that away.
+held above target and the learner must not integrate that away. The exception
+is a house already warmer than the pre-ramp asks for: it keeps learning from
+the excess, so a warm afternoon is not held warm all evening.
 
 Wind's share only counts if the wind term is switched on; the outdoor share
 needs nothing but a weather entity. If the weather integration provides no
@@ -588,8 +601,8 @@ version, which is load-bearing for state-store staleness checks). All five
 are gone as of this write-up.
 
 **Download diagnostics** (on the integration's entry page) additionally dumps
-the *full offset table* — every band's learned offset, capacity ceiling,
-recovery rate and sample count. The `learned_offset` sensor only shows the band
+the *full offset table* — the shared offset, and every band's own offset,
+capacity ceiling, recovery rate and sample count. The `learned_offset` sensor only shows the band
 you are in right now, so the table is what distinguishes "still filling in"
 from "learned something odd at −10 °C and has not been back since".
 

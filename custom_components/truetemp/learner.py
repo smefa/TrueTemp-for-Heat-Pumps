@@ -95,6 +95,36 @@ authority ramp is a safety property that asks "how much evidence is there that
 install starts from a far better guess but still ramps its authority over the
 same three days.
 
+## A shared part, a per-band part, and no edges
+
+A table that only learns in the band the weather happens to be in has two
+failure modes, both seen on a real install after the occupant raised their
+pump curve:
+
+  * A band not visited since the curve changed keeps its old answer, so the
+    next cold night replays a correction for a curve that no longer exists.
+  * Neighbouring bands drift apart, and the published offset jumped by the
+    difference the moment the outdoor temperature crossed an edge — several
+    degrees at once, which is a bigger disturbance than anything learned.
+
+So the offset is composed of two parts:
+
+    hold = shared_weight(outdoor) * shared_offset_c + blended per-band value
+
+`shared_offset_c` is one number for the whole house. Most of every update
+goes into it, so a curve or target change is absorbed within hours and
+applies to every band at once. It is learned and applied only in the cold:
+full weight at `SHARED_FULL_BELOW_C` and below, fading to nothing at
+`SHARED_NONE_ABOVE_C`. Mild weather is dominated by sun, cooking and the
+pump cycling on and off rather than by the curve, and must not teach the
+cold bands anything.
+
+The per-band value is read at band centres and interpolated linearly between
+the two nearest, so the output moves smoothly with outdoor temperature and has
+no edges. An update goes to those same two bands, split by how close each
+centre is, which keeps the bands' own values as a small shape on top of the
+shared part.
+
 ## Deep cold, and why a bin carries four numbers
 
 Below some outdoor temperature the pump is flat out and additional spoofing
@@ -239,11 +269,23 @@ BASELINE_MIN_SAMPLES_TO_SEED = 6
 # the right direction, not to leap the whole way on one observation.
 BASELINE_SEED_MAX_C = 3.0
 
+# --- Shared offset ---------------------------------------------------------
+# Where the shared part counts (see the module docstring). Full weight at and
+# below the first, none at and above the second, linear in between so there
+# is no edge to jump across.
+SHARED_FULL_BELOW_C = 5.0
+SHARED_NONE_ABOVE_C = 10.0
+# Share of each update that goes into the shared part at full weight. The rest
+# goes to the two nearest bands, which is what lets bands still differ where
+# the pump curve is non-linear.
+SHARED_LEARN_SHARE = 0.75
+# Bound on a band's own part. Only the combined offset is held to the authority
+# clamp. A band's own part may have to cancel a shared part of the opposite
+# sign, so capping it at the same 5 degC could flip the correction's
+# direction. Twice the authority covers every combination the clamp allows.
+OWN_OFFSET_MAX_C = 2.0 * MAX_AUTHORITY_C
+
 # --- Table shaping ---------------------------------------------------------
-# Share of each update bled into the two neighbouring bins. Spreads coverage so
-# a bin entered for the first time starts from a sensible value instead of
-# zero, and keeps the table smooth across the outdoor range.
-NEIGHBOUR_SHARE = 0.25
 # EWMA weight for the per-bin close-rate estimate.
 CLOSE_RATE_ALPHA = 0.1
 # A target change at least this large restarts the hold-off window.
@@ -314,6 +356,9 @@ class LearnerState:
     # first cycle is already active does not count as an off->on transition and
     # try to seed from an empty baseline table.
     prev_is_active: bool = False
+    # The whole-house part of the offset; see "A shared part" in the module
+    # docstring. Zero on an upgraded install, so its output is unchanged by it.
+    shared_offset_c: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -351,6 +396,10 @@ class LearnerInputs:
     # for the same reason, just in the other direction — see `step`. Defaults
     # False so every existing call site is unaffected.
     weather_preramp: bool = False
+    # The pre-ramp's size (zero or negative, outdoor degrees). It says how far
+    # above target the pre-ramp itself means to hold the house, so warmth
+    # beyond that is still learned from — see `_preramp_overshoot_c`.
+    weather_preramp_c: float = 0.0
     # True while the sun pre-cool is deliberately holding the house BELOW
     # target ahead of more sun arriving. Same freeze, same reason, opposite
     # direction from `weather_preramp` — see `step`. Defaults False so every
@@ -405,6 +454,10 @@ class LearnerResult:
     baseline_reason: str = ""
     seeded_bins: int = 0
     seeded: bool = False
+    # The whole-house part of the offset, and how much of it applies at the
+    # current outdoor temperature (0..1).
+    shared_offset_c: float = 0.0
+    shared_weight: float = 0.0
     model_version: str = MODEL_VERSION
 
 
@@ -482,8 +535,8 @@ def effective_hold_offset(bins: tuple[OutdoorBin, ...], index: int) -> float:
     whatever the house needed at the coldest temperature already seen, rather
     than from zero.
 
-    Falls back to the bin's own stored value (normally 0.0, or whatever
-    neighbour smoothing has bled into it) when nothing has been visited at all.
+    Falls back to the bin's own stored value (normally 0.0) when nothing has
+    been visited at all.
     """
     if _has_value(bins[index]):
         return bins[index].hold_offset_c
@@ -527,7 +580,7 @@ def _freeze_reason(inputs: LearnerInputs, state: LearnerState) -> str | None:
         return "heating hard limit engaged, output is forced rather than learned"
     if inputs.price_braking:
         return "price compensation is deliberately holding below target"
-    if inputs.weather_preramp:
+    if inputs.weather_preramp and _preramp_overshoot_c(inputs) <= 0.0:
         return "anticipating a weather change, holding the house above target"
     if inputs.sun_precool:
         return "anticipating more sun, holding the house below target"
@@ -539,6 +592,21 @@ def _freeze_reason(inputs: LearnerInputs, state: LearnerState) -> str | None:
     if inputs.dt_hours <= 0.0:
         return "no elapsed time since the last step"
     return None
+
+
+def _preramp_overshoot_c(inputs: LearnerInputs) -> float:
+    """How far the house sits above what the weather pre-ramp is asking for.
+
+    The pre-ramp holds the house above target on purpose, about as far as its
+    own size, and learning from that would undo it. But a house already warmer
+    than that is too warm whatever the forecast says, and freezing then only
+    keeps it there for the hours the pre-ramp lasts. Positive means learn from
+    this much; zero or less means keep the freeze.
+    """
+    if inputs.indoor_temp_c is None:
+        return 0.0
+    allowance_c = max(0.0, -inputs.weather_preramp_c) / SPOOF_PER_INDOOR_C
+    return inputs.indoor_temp_c - inputs.target_c - allowance_c
 
 
 def baseline_coverage_of(baseline_bins: tuple[BaselineBin, ...]) -> float:
@@ -622,8 +690,12 @@ def seed_offsets_from_baseline(
     bins: tuple[OutdoorBin, ...],
     baseline_bins: tuple[BaselineBin, ...],
     target_c: float,
+    shared_offset_c: float = 0.0,
 ) -> tuple[tuple[OutdoorBin, ...], int]:
     """Give un-learned bins a starting offset from what the raw curve did.
+
+    A seed is a whole offset, so the part the shared offset already supplies at
+    that band's centre is taken off before it is stored as the band's own.
 
     Called once, on the transition from compensation-off to compensation-on.
     Bins with closed-loop evidence (`samples > 0`) are never touched: measuring
@@ -631,7 +703,7 @@ def seed_offsets_from_baseline(
     it from where the curve settled.
 
     A seed deeper than today's authority ramp allows is truncated to it by
-    `_apply_to_bins` on the very next cycle, and that is deliberate rather than
+    `_apply_learning` on the very next cycle, and that is deliberate rather than
     a loss. The truncated value is still pinned against the clamp, so the pump
     gets everything it is allowed to get; as the ramp opens, the persistent
     error re-deepens the bin exactly as fast as it is permitted to. And if the
@@ -659,37 +731,115 @@ def seed_offsets_from_baseline(
         # observed to be able to use.
         ceiling = _clamp(bin_.ceiling_c, CEILING_MIN_C, MAX_AUTHORITY_C)
         seed = _clamp(seed, -ceiling, MAX_AUTHORITY_C)
-        updated[i] = replace(bin_, hold_offset_c=seed, seeded=True)
+        own = seed - shared_weight(bin_centre(i)) * shared_offset_c
+        updated[i] = replace(bin_, hold_offset_c=own, seeded=True)
         seeded_count += 1
     return tuple(updated), seeded_count
 
 
-def _apply_to_bins(
-    bins: tuple[OutdoorBin, ...], index: int, delta_c: float, lower: float, upper: float
-) -> tuple[OutdoorBin, ...]:
-    """Move the occupied bin by `delta_c` and bleed a share into its neighbours.
+def shared_weight(outdoor_c: float) -> float:
+    """How much of the shared offset applies (and learns) at this temperature."""
+    if outdoor_c <= SHARED_FULL_BELOW_C:
+        return 1.0
+    if outdoor_c >= SHARED_NONE_ABOVE_C:
+        return 0.0
+    return (SHARED_NONE_ABOVE_C - outdoor_c) / (SHARED_NONE_ABOVE_C - SHARED_FULL_BELOW_C)
 
-    Only the occupied bin's sample count advances: the neighbour share exists to
-    pre-warm values so an adjacent bin starts sensibly when first entered, not
-    to claim evidence that was never collected there.
+
+def bin_centre(index: int) -> float:
+    """The outdoor temperature a bin's value is read at when blending.
+
+    The two open-ended bins are given the width of their closed neighbour.
     """
-    updated = list(bins)
-    occupied = updated[index]
-    updated[index] = replace(
-        occupied,
-        hold_offset_c=_clamp(occupied.hold_offset_c + delta_c, lower, upper),
-        samples=occupied.samples + 1,
-    )
-    for neighbour in (index - 1, index + 1):
-        if 0 <= neighbour < len(updated):
-            nb = updated[neighbour]
-            updated[neighbour] = replace(
-                nb,
-                hold_offset_c=_clamp(
-                    nb.hold_offset_c + delta_c * NEIGHBOUR_SHARE, lower, upper
-                ),
-            )
-    return tuple(updated)
+    if index <= 0:
+        return BIN_EDGES[0] - (BIN_EDGES[1] - BIN_EDGES[0]) / 2.0
+    if index >= N_BINS - 1:
+        return BIN_EDGES[-1] + (BIN_EDGES[-1] - BIN_EDGES[-2]) / 2.0
+    return (BIN_EDGES[index - 1] + BIN_EDGES[index]) / 2.0
+
+
+def blend_weights(outdoor_c: float) -> tuple[tuple[int, float], ...]:
+    """The bins bracketing `outdoor_c` by centre, with linear weights summing to 1.
+
+    Beyond the outermost centres the outermost bin is held.
+    """
+    if outdoor_c <= bin_centre(0):
+        return ((0, 1.0),)
+    for i in range(N_BINS - 1):
+        upper_centre = bin_centre(i + 1)
+        if outdoor_c <= upper_centre:
+            lower_centre = bin_centre(i)
+            frac = (outdoor_c - lower_centre) / (upper_centre - lower_centre)
+            return ((i, 1.0 - frac), (i + 1, frac))
+    return ((N_BINS - 1, 1.0),)
+
+
+def local_offset_at(bins: tuple[OutdoorBin, ...], outdoor_c: float) -> float:
+    """The per-band part of the offset, blended between the two nearest bands."""
+    return sum(a * effective_hold_offset(bins, i) for i, a in blend_weights(outdoor_c))
+
+
+def hold_offset_at(
+    bins: tuple[OutdoorBin, ...], shared_offset_c: float, outdoor_c: float
+) -> float:
+    """The full learned offset at this outdoor temperature, before any clamp."""
+    return shared_weight(outdoor_c) * shared_offset_c + local_offset_at(bins, outdoor_c)
+
+
+def _apply_learning(
+    bins: tuple[OutdoorBin, ...],
+    shared_offset_c: float,
+    outdoor_c: float,
+    index: int,
+    learn_c: float,
+    local_only_c: float,
+) -> tuple[tuple[OutdoorBin, ...], float]:
+    """Move the composed offset at `outdoor_c` by `learn_c + local_only_c`.
+
+    `learn_c` is this cycle's integral step: `SHARED_LEARN_SHARE` of it goes to
+    the shared part, scaled by the shared weight, so mild weather barely moves
+    it. `local_only_c` is a clamp pulling the value back inside today's bounds
+    (a tightened ceiling, a seed deeper than the authority ramp). Those bounds
+    belong to the occupied band, so that part never reaches the shared offset.
+
+    The per-band remainder goes to the two bracketing bands, split by blend
+    weight and scaled so the blended value moves by exactly that remainder. Only
+    bands that already hold a value take part, and the occupied band always
+    does. On its first visit it starts from the value it was interpolated at,
+    so being entered does not itself move the output. Only the occupied band's
+    sample count advances.
+    """
+    weight = shared_weight(outdoor_c)
+    shared_step = SHARED_LEARN_SHARE * weight * learn_c
+    local_step = learn_c - weight * shared_step + local_only_c
+    new_shared = _clamp(shared_offset_c + shared_step, -MAX_AUTHORITY_C, MAX_AUTHORITY_C)
+
+    base = list(bins)
+    occupied = bins[index]
+    start = occupied.hold_offset_c if _has_value(occupied) else effective_hold_offset(bins, index)
+    base[index] = replace(occupied, hold_offset_c=start, samples=occupied.samples + 1)
+    eligible = [(i, a) for i, a in blend_weights(outdoor_c) if _has_value(base[i])]
+    if not any(i == index for i, _ in eligible):
+        eligible = [(index, 1.0)]
+
+    # The blended value is linear in the moved bands, but an unvisited band in
+    # between interpolates from them too, so measure the gain rather than assume
+    # it. Probed with an unclamped unit step for the same reason.
+    before = local_offset_at(tuple(base), outdoor_c)
+    probe = list(base)
+    for i, a in eligible:
+        probe[i] = replace(probe[i], hold_offset_c=probe[i].hold_offset_c + a)
+    gain = local_offset_at(tuple(probe), outdoor_c) - before
+    scale = local_step / gain if gain > 1e-9 else 0.0
+    updated = list(base)
+    for i, a in eligible:
+        updated[i] = replace(
+            updated[i],
+            hold_offset_c=_clamp(
+                updated[i].hold_offset_c + a * scale, -OWN_OFFSET_MAX_C, OWN_OFFSET_MAX_C
+            ),
+        )
+    return tuple(updated), new_shared
 
 
 def step(state: LearnerState, inputs: LearnerInputs) -> tuple[LearnerState, LearnerResult]:
@@ -729,10 +879,11 @@ def step(state: LearnerState, inputs: LearnerInputs) -> tuple[LearnerState, Lear
     # Switching compensation on is the one moment the baseline table pays off.
     # Done before `hold` is read below, so the first active cycle already acts on
     # the seeded value instead of starting from zero.
+    shared = state.shared_offset_c
     seeded_bins = 0
     if inputs.is_active and not state.prev_is_active:
         bins, seeded_bins = seed_offsets_from_baseline(
-            bins, baseline_bins, inputs.target_c
+            bins, baseline_bins, inputs.target_c, shared
         )
 
     # While off the integrator is frozen and the pump runs its own curve, so
@@ -762,7 +913,8 @@ def step(state: LearnerState, inputs: LearnerInputs) -> tuple[LearnerState, Lear
     lower = -min(authority, ceiling)
     upper = authority
 
-    hold = _clamp(effective_hold_offset(bins, index), lower, upper)
+    hold_raw = hold_offset_at(bins, shared, inputs.outdoor_temp_c)
+    hold = _clamp(hold_raw, lower, upper)
 
     error_c: float | None = None
     if inputs.indoor_data_available and inputs.indoor_temp_c is not None:
@@ -795,7 +947,13 @@ def step(state: LearnerState, inputs: LearnerInputs) -> tuple[LearnerState, Lear
             rate_c_per_h = (inputs.indoor_temp_c - state.prev_indoor_c) / inputs.dt_hours
         closing = rate_c_per_h > CLOSING_RATE_C_PER_H
 
-        raw_delta = -(error_c * SPOOF_PER_INDOOR_C) * (inputs.dt_hours / tau_i_h)
+        # Unfrozen during a pre-ramp only when the house is warmer than the
+        # pre-ramp asks for, and then only that excess is learned from.
+        learn_error_c = error_c
+        if inputs.weather_preramp:
+            learn_error_c = -_preramp_overshoot_c(inputs)
+
+        raw_delta = -(learn_error_c * SPOOF_PER_INDOOR_C) * (inputs.dt_hours / tau_i_h)
         delta = _clamp(raw_delta, -MAX_STEP_PER_CYCLE_C, MAX_STEP_PER_CYCLE_C)
         candidate = hold + delta
 
@@ -862,9 +1020,19 @@ def step(state: LearnerState, inputs: LearnerInputs) -> tuple[LearnerState, Lear
             lower = -min(authority, ceiling)
 
         if not saturated:
-            bins = _apply_to_bins(bins, index, delta, lower, upper)
+            # The clamped step is what is learned. The gap between the stored
+            # value and its clamp is pulled in too, so a value outside today's
+            # bounds does not linger as windup.
+            bins, shared = _apply_learning(
+                bins,
+                shared,
+                inputs.outdoor_temp_c,
+                index,
+                learn_c=_clamp(hold + delta, lower, upper) - hold,
+                local_only_c=hold - hold_raw,
+            )
             total_samples = state.total_samples + 1
-            hold = bins[index].hold_offset_c
+            hold = _clamp(hold_offset_at(bins, shared, inputs.outdoor_temp_c), lower, upper)
         else:
             hold = _clamp(hold, lower, upper)
         new_bins = bins
@@ -895,6 +1063,7 @@ def step(state: LearnerState, inputs: LearnerInputs) -> tuple[LearnerState, Lear
         prev_bin_index=index,
         bin_entered_s=bin_entered_s,
         prev_is_active=inputs.is_active,
+        shared_offset_c=shared,
     )
 
     label = bin_label(index)
@@ -933,6 +1102,8 @@ def step(state: LearnerState, inputs: LearnerInputs) -> tuple[LearnerState, Lear
         baseline_reason=baseline_reason,
         seeded_bins=seeded_bins,
         seeded=final_bin.seeded,
+        shared_offset_c=shared,
+        shared_weight=shared_weight(inputs.outdoor_temp_c),
         offset_c=offset_c,
         hold_offset_c=hold,
         proportional_c=proportional_c,

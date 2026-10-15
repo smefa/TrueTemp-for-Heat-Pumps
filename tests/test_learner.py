@@ -390,7 +390,7 @@ class TestSaturation:
 
 
 class TestTable:
-    def test_neighbours_are_pre_warmed_without_claiming_evidence(self):
+    def test_neighbours_are_not_credited_with_evidence(self):
         state = mature_state()
         after, result = learner.step(
             state, make_inputs(indoor_temp_c=19.0, outdoor_temp_c=0.0)
@@ -399,8 +399,6 @@ class TestTable:
         assert after.bins[index].samples == 1
         for neighbour in (index - 1, index + 1):
             if 0 <= neighbour < learner.N_BINS:
-                assert after.bins[neighbour].hold_offset_c < 0
-                # Pre-warmed, but not credited with evidence never collected.
                 assert after.bins[neighbour].samples == 0
 
     def test_unvisited_bins_interpolate_between_visited_ones(self):
@@ -438,6 +436,189 @@ class TestTable:
         after, result = learner.step(state, make_inputs())
         assert len(after.bins) == learner.N_BINS
         assert result.offset_c == pytest.approx(0.0, abs=1e-9)
+
+
+def _bins_with(**values: float) -> tuple:
+    """A table with the given bins visited at the given offsets, e.g. b4=-4.0."""
+    bins = list(learner.initial_state().bins)
+    for key, value in values.items():
+        bins[int(key[1:])] = OutdoorBin(hold_offset_c=value, samples=20)
+    return tuple(bins)
+
+
+class TestBlending:
+    """The output moves smoothly with outdoor temperature: no band edges."""
+
+    def test_weights_sum_to_one_and_hold_beyond_the_ends(self):
+        for outdoor in (-40.0, -17.5, -3.0, 0.0, 4.99, 5.0, 12.5, 30.0):
+            assert sum(a for _, a in learner.blend_weights(outdoor)) == pytest.approx(1.0)
+        assert learner.blend_weights(-40.0) == ((0, 1.0),)
+        assert learner.blend_weights(40.0) == ((learner.N_BINS - 1, 1.0),)
+
+    def test_a_band_centre_reads_that_band_alone(self):
+        bins = _bins_with(b4=-4.0, b5=-1.0)
+        assert learner.local_offset_at(bins, learner.bin_centre(4)) == pytest.approx(-4.0)
+        assert learner.local_offset_at(bins, learner.bin_centre(5)) == pytest.approx(-1.0)
+
+    def test_crossing_a_band_edge_does_not_jump(self):
+        """The house 2 case: 0..5 and 5..10 far apart used to jump by the whole
+        difference at 5 degC."""
+        bins = _bins_with(b4=-4.0, b5=-1.0)
+        below = learner.hold_offset_at(bins, 0.0, 4.95)
+        above = learner.hold_offset_at(bins, 0.0, 5.05)
+        assert abs(above - below) < 0.1
+        assert learner.hold_offset_at(bins, 0.0, 5.0) == pytest.approx(-2.5)
+
+    @pytest.mark.parametrize("outdoor", [2.5, 4.0, 6.0, 9.0, 12.0])
+    def test_one_step_moves_the_output_by_exactly_the_step(self, outdoor):
+        state = mature_state(bins=_bins_with(b4=-3.0, b5=-1.0, b6=1.0))
+        before = learner.hold_offset_at(state.bins, state.shared_offset_c, outdoor)
+        after, result = learner.step(
+            state, make_inputs(indoor_temp_c=20.5, outdoor_temp_c=outdoor)
+        )
+        moved = learner.hold_offset_at(after.bins, after.shared_offset_c, outdoor)
+        expected = -0.5 * 0.25 / result.tau_i_h
+        assert moved - before == pytest.approx(expected)
+
+    def test_one_step_is_exact_next_to_an_unvisited_band(self):
+        """An unvisited band interpolates from the one being moved, so the
+        update has to account for that rather than double-count it."""
+        state = mature_state(bins=_bins_with(b4=-3.0))
+        outdoor = 6.0
+        before = learner.hold_offset_at(state.bins, 0.0, outdoor)
+        after, result = learner.step(
+            state, make_inputs(indoor_temp_c=20.5, outdoor_temp_c=outdoor)
+        )
+        moved = learner.hold_offset_at(after.bins, after.shared_offset_c, outdoor)
+        assert moved - before == pytest.approx(-0.5 * 0.25 / result.tau_i_h)
+
+    def test_entering_an_unvisited_band_starts_where_it_was_interpolated(self):
+        """A first visit must not itself move the output."""
+        state = mature_state(bins=_bins_with(b3=-2.0))
+        outdoor = learner.bin_centre(4)
+        before = learner.hold_offset_at(state.bins, 0.0, outdoor)
+        after, result = learner.step(
+            state, make_inputs(indoor_temp_c=21.0, outdoor_temp_c=outdoor)
+        )
+        assert result.bin_index == 4
+        assert after.bins[4].samples == 1
+        assert after.bins[4].hold_offset_c == pytest.approx(-2.0)
+        assert learner.hold_offset_at(after.bins, 0.0, outdoor) == pytest.approx(before)
+
+
+class TestSharedOffset:
+    """One whole-house correction, learned and applied only in the cold."""
+
+    def test_weight_fades_between_five_and_ten(self):
+        assert learner.shared_weight(-20.0) == 1.0
+        assert learner.shared_weight(5.0) == 1.0
+        assert learner.shared_weight(7.5) == pytest.approx(0.5)
+        assert learner.shared_weight(10.0) == 0.0
+        assert learner.shared_weight(15.0) == 0.0
+
+    def test_learning_in_the_cold_reaches_every_cold_band(self):
+        """The curve-change case: what is learned at 0 degC must show up at
+        -10 degC without waiting for a visit there."""
+        state = mature_state(bins=_bins_with(b2=-3.0, b4=-3.0))
+        far_before = learner.hold_offset_at(state.bins, 0.0, learner.bin_centre(2))
+        after, _ = learner.step(
+            state, make_inputs(indoor_temp_c=22.0, outdoor_temp_c=learner.bin_centre(4))
+        )
+        assert after.shared_offset_c > 0
+        far_after = learner.hold_offset_at(
+            after.bins, after.shared_offset_c, learner.bin_centre(2)
+        )
+        assert far_after > far_before
+        assert after.bins[2].hold_offset_c == pytest.approx(-3.0)
+
+    def test_mild_weather_does_not_teach_the_shared_part(self):
+        state = mature_state(bins=_bins_with(b6=2.0))
+        after, result = learner.step(
+            state, make_inputs(indoor_temp_c=23.0, outdoor_temp_c=12.0)
+        )
+        assert not result.frozen
+        assert after.shared_offset_c == 0.0
+        assert after.bins[6].hold_offset_c > 2.0
+
+    def test_shared_part_does_not_apply_in_mild_weather(self):
+        bins = _bins_with(b6=2.0)
+        assert learner.hold_offset_at(bins, -3.0, 12.0) == pytest.approx(2.0)
+        assert learner.hold_offset_at(bins, -3.0, 0.0) == pytest.approx(-1.0)
+
+    def test_a_ceiling_pull_in_stays_in_the_band(self):
+        """A value outside the occupied band's own bounds is that band's
+        business, not something every other band should inherit."""
+        bins = list(_bins_with(b4=-4.0))
+        bins[4] = replace(bins[4], ceiling_c=2.0)
+        state = mature_state(bins=tuple(bins))
+        after, result = learner.step(
+            state, make_inputs(indoor_temp_c=21.0, outdoor_temp_c=learner.bin_centre(4))
+        )
+        assert result.hold_offset_c == pytest.approx(-2.0)
+        assert after.shared_offset_c == pytest.approx(0.0)
+
+    def test_seeding_takes_off_what_the_shared_part_already_supplies(self):
+        baseline = list(learner.initial_state().baseline_bins)
+        baseline[4] = learner.BaselineBin(indoor_c=19.0, samples=50)
+        bins, _ = learner.seed_offsets_from_baseline(
+            learner.initial_state().bins, tuple(baseline), 21.0, -1.5
+        )
+        assert bins[4].hold_offset_c == pytest.approx(-0.5)
+        assert learner.hold_offset_at(bins, -1.5, learner.bin_centre(4)) == pytest.approx(-2.0)
+
+    def test_own_part_can_cancel_a_large_opposite_shared_part(self):
+        """A band's own part may exceed the authority clamp, because only the
+        combined offset is bound by it. Capping it there would flip a 'less
+        heat' correction into 'more heat'."""
+        bins = list(learner.initial_state().bins)
+        bins[4] = OutdoorBin(hold_offset_c=7.0, samples=20)
+        state = mature_state(bins=tuple(bins), shared_offset_c=-4.0)
+        outdoor = learner.bin_centre(4)
+        before = learner.hold_offset_at(state.bins, state.shared_offset_c, outdoor)
+        _, result = learner.step(
+            state, make_inputs(indoor_temp_c=24.0, outdoor_temp_c=outdoor)
+        )
+        assert before == pytest.approx(3.0)
+        assert result.hold_offset_c > before
+
+    def test_result_reports_the_shared_part(self):
+        state = mature_state(shared_offset_c=-1.5)
+        _, result = learner.step(state, make_inputs(outdoor_temp_c=7.5))
+        assert result.shared_offset_c == pytest.approx(-1.5)
+        assert result.shared_weight == pytest.approx(0.5)
+
+
+class TestWeatherPreramp:
+    """The pre-ramp freeze, which used to hold an already-warm house warm."""
+
+    def test_warmth_the_preramp_asked_for_is_not_learned(self):
+        state = mature_state()
+        after, result = learner.step(
+            state,
+            make_inputs(indoor_temp_c=21.5, weather_preramp=True, weather_preramp_c=-0.8),
+        )
+        assert result.frozen
+        assert "weather change" in result.freeze_reason
+        assert after.total_samples == state.total_samples
+
+    def test_warmth_beyond_it_is_learned(self):
+        state = mature_state()
+        after, result = learner.step(
+            state,
+            make_inputs(indoor_temp_c=22.0, weather_preramp=True, weather_preramp_c=-0.6),
+        )
+        assert not result.frozen
+        assert after.total_samples == state.total_samples + 1
+        assert result.hold_offset_c > 0
+
+    def test_only_the_excess_is_learned(self):
+        state = mature_state()
+        _, ramp = learner.step(
+            state,
+            make_inputs(indoor_temp_c=22.0, weather_preramp=True, weather_preramp_c=-0.6),
+        )
+        _, plain = learner.step(state, make_inputs(indoor_temp_c=21.4))
+        assert ramp.hold_offset_c == pytest.approx(plain.hold_offset_c)
 
 
 class TestRecoverableSag:

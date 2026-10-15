@@ -1327,6 +1327,7 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
                     is_active=self.is_active,
                     price_braking=bool(previous and previous.price_braking),
                     weather_preramp=bool(previous and previous.weather_preramp_active),
+                    weather_preramp_c=previous.weather_preramp_c if previous else 0.0,
                     sun_precool=bool(previous and previous.sun_precool_active),
                     vacation_feedforward=bool(
                         previous
@@ -2223,6 +2224,8 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
                 {
                     "learner_bin": learner.bin_index,
                     "learner_hold_offset_c": learner.hold_offset_c,
+                    "learner_shared_offset_c": learner.shared_offset_c,
+                    "learner_shared_weight": learner.shared_weight,
                     "learner_proportional_c": learner.proportional_c,
                     "learner_authority_c": learner.authority_c,
                     "learner_ceiling_c": learner.ceiling_c,

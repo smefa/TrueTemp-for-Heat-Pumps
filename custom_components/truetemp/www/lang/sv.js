@@ -68,7 +68,7 @@ export const STRINGS = {
   thRecovery: "Återhämtning °C/h",
   thSamples: "Mätningar",
   markerSeededTitle: "Offset hämtad från grundlinjen när kompensationen slogs på, ännu inte bekräftad av mätningar här med kompensationen aktiv",
-  markerSpillTitle: "Extrapolerat från grannbandet, inte uppmätt här",
+  markerSpillTitle: "Lånat från resten av tabellen, inte uppmätt här",
   markerPremeasuredTitle: "Förmätning: registrerad med kompensationen avstängd, innan detta band hade en mätning med kompensationen aktiv",
   markerPremeasuredIndoor: ". Inomhustemperaturen stabiliserades vid {value}",
   legendBase: "Den markerade raden är bandet som används nu. Nedtonade rader har ingen direkt mätning ännu",

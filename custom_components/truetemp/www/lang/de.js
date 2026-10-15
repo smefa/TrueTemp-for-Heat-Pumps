@@ -68,7 +68,7 @@ export const STRINGS = {
   thRecovery: "Erholung °C/h",
   thSamples: "Messwerte",
   markerSeededTitle: "Offset aus der Grundlinie bei ausgeschalteter Kompensation übernommen, hier noch nicht durch Messungen bei aktiver Kompensation bestätigt",
-  markerSpillTitle: "Aus dem Nachbarband hochgerechnet, hier nicht gemessen",
+  markerSpillTitle: "Vom Rest der Tabelle übernommen, hier nicht gemessen",
   markerPremeasuredTitle: "Vormessung: aufgezeichnet bei ausgeschalteter Kompensation, bevor dieses Band eine Messung bei aktiver Kompensation hatte",
   markerPremeasuredIndoor: ". Innentemperatur pendelte sich bei {value} ein",
   legendBase: "Die markierte Zeile ist das aktuell genutzte Band. Ausgegraute Zeilen haben noch keine direkte Messung",

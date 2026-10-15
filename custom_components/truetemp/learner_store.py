@@ -35,6 +35,10 @@ table intact. Bumping the version here would cold-start every existing
 install's offset table just to gain a table that starts empty anyway, which is
 the same throwaway `learner.py`'s own docstring argues against.
 
+`shared_offset_c` (the whole-house part of the offset) follows the same rule:
+a payload without it loads as zero, which is what that install had in effect,
+so the upgrade keeps the learned table as it was.
+
 The rolling price-spread/median history (`PriceSpreadHistory` from
 `heuristic.py`, added for `heuristic.price_significance()`) follows the exact
 same rule: it lives under its own top-level `price_spread_history` key,
@@ -152,6 +156,7 @@ def serialize(
         "prev_target_c": state.prev_target_c,
         "prev_offset_c": state.prev_offset_c,
         "prev_is_active": state.prev_is_active,
+        "shared_offset_c": state.shared_offset_c,
         "lag": {
             "step_minutes": lag_state.step_minutes,
             "offsets_c": list(lag_state.offsets_c),
@@ -340,6 +345,15 @@ def deserialize(
         # is exactly the state it was actually in.
         raw_prev_active = data.get("prev_is_active", False)
         prev_is_active = raw_prev_active if isinstance(raw_prev_active, bool) else False
+        # Same again: absent before the shared offset existed, and zero is
+        # exactly what such an install had in effect. An unreadable value is
+        # not worth the table, so it falls back to zero too.
+        try:
+            shared_offset_c = float(data.get("shared_offset_c", 0.0))
+        except (TypeError, ValueError):
+            shared_offset_c = 0.0
+        if not math.isfinite(shared_offset_c):
+            shared_offset_c = 0.0
     except (KeyError, TypeError, ValueError) as err:
         _LOGGER.debug("Learner state discarded: corrupt payload (%s)", err)
         return None
@@ -384,6 +398,7 @@ def deserialize(
         prev_bin_index=None,
         bin_entered_s=None,
         prev_is_active=prev_is_active,
+        shared_offset_c=shared_offset_c,
     )
 
     # The lag buffer is a pure optimisation — losing it costs a few days of

@@ -310,10 +310,10 @@ class TrueTempCard extends HTMLElement {
         const seeded = b.seeded === true;
         if (seeded) hasSeeded = true;
         // A band can hold an offset on zero samples for two different reasons:
-        // seeded from the open-loop baseline on activation, or nudged by a
-        // neighbouring band's update without being credited a sample itself.
+        // seeded from the open-loop baseline on activation, or borrowed from
+        // the whole-house shared offset without being measured here.
         // Worth telling apart — one is open-loop evidence for this exact band,
-        // the other is a guess borrowed from next door.
+        // the other is a guess borrowed from the rest of the table.
         const spill = !seeded && samples === 0 && offsetC !== 0;
         if (spill) extrapolated = true;
         const marker = seeded
