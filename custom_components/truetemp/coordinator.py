@@ -611,6 +611,24 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
         return (1 if primary_id else 0) + len(extra_ids)
 
     @property
+    def source_entity_ids(self) -> dict[str, str]:
+        """The user's own configured input entities, for the card's click-through
+        to their history. `indoor` is only present for a single sensor: with
+        several, the shown number is an aggregate no one entity holds."""
+        ids: dict[str, str] = {}
+        outdoor = _entry_value(self.entry, CONF_OUTDOOR_TEMP_SENSOR, None)
+        if outdoor:
+            ids["outdoor"] = outdoor
+        if self.indoor_sensor_total_configured == 1:
+            indoor = _entry_value(self.entry, CONF_INDOOR_TEMP_SENSOR, None)
+            if indoor:
+                ids["indoor"] = indoor
+        price = _entry_value(self.entry, CONF_NORDPOOL_PRICE_ENTITY, None)
+        if price:
+            ids["price"] = price
+        return ids
+
+    @property
     def lookahead_enabled(self) -> bool:
         return bool(
             _entry_value(

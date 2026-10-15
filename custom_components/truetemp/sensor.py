@@ -476,6 +476,7 @@ class StatusSensor(TrueTempEntity, SensorEntity):
 
         attrs: dict = {
             "outdoor_sensor_ok": outdoor_ok,
+            "source_entities": self.coordinator.source_entity_ids,
             "last_error": str(last_error) if last_error else None,
             "last_error_at": (
                 dt_util.as_local(self.coordinator.last_error_at).isoformat()
