@@ -65,6 +65,7 @@ def populated_state() -> learner.LearnerState:
         prev_bin_index=3,
         bin_entered_s=12345.0,
         prev_is_active=True,
+        shared_offset_c=-1.25,
     )
 
 
@@ -102,6 +103,7 @@ class TestRoundTrip:
         assert restored.prev_target_c == state.prev_target_c
         assert restored.prev_offset_c == state.prev_offset_c
         assert restored.prev_is_active == state.prev_is_active
+        assert restored.shared_offset_c == state.shared_offset_c
         assert restored_lag == lag_state
         assert restored_price_history == price_history
 
@@ -196,6 +198,53 @@ class TestBaselineTable:
         # `price_spread_history` didn't exist yet either — same upgrade path,
         # same "comes back at its default" expectation.
         assert restored_price_history == heuristic.initial_price_spread_history()
+
+    def test_old_payload_without_shared_offset_loads_as_zero(self):
+        """Zero is what an install written before the shared offset had in
+        effect, so the table it learned comes back unchanged."""
+        payload = store.serialize(populated_state(), populated_lag())
+        del payload["shared_offset_c"]
+        restored, _, _ = store.deserialize(payload)
+        assert restored.shared_offset_c == 0.0
+        assert restored.bins == populated_state().bins
+
+    @pytest.mark.parametrize("junk", ["nope", None, float("nan"), [1]])
+    def test_unreadable_shared_offset_falls_back_to_zero(self, junk):
+        payload = store.serialize(populated_state(), populated_lag())
+        payload["shared_offset_c"] = junk
+        restored, _, _ = store.deserialize(payload)
+        assert restored is not None
+        assert restored.shared_offset_c == 0.0
+
+    def test_outdoor_reference_round_trips(self):
+        payload = store.serialize(
+            populated_state(), populated_lag(), outdoor_reference=(5.3, 1234.5)
+        )
+        assert store.outdoor_reference_from(payload) == (5.3, 1234.5)
+
+    def test_outdoor_reference_survives_a_discarded_learner_payload(self):
+        payload = store.serialize(
+            populated_state(), populated_lag(), outdoor_reference=(5.3, 1234.5)
+        )
+        payload["model_version"] = "something_else"
+        assert store.deserialize(payload) is None
+        assert store.outdoor_reference_from(payload) == (5.3, 1234.5)
+
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            None,
+            "x",
+            {},
+            {"value_c": "a", "at_s": 1.0},
+            {"value_c": float("inf"), "at_s": 1.0},
+        ],
+    )
+    def test_missing_or_corrupt_outdoor_reference_is_none(self, raw):
+        payload = store.serialize(populated_state(), populated_lag())
+        if raw is not None:
+            payload["outdoor_reference"] = raw
+        assert store.outdoor_reference_from(payload) is None
 
     def test_corrupt_baseline_drops_only_the_baseline(self):
         payload = store.serialize(populated_state(), populated_lag())

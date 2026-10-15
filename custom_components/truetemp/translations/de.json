@@ -349,6 +349,10 @@
     }
   },
   "issues": {
+    "outdoor_sensor_jumping": {
+      "title": "TrueTemp ({name}): Der Außenfühler springt",
+      "description": "{entity_id} springt um mehr als 2 °C und hat sich seit 15 Minuten nicht beruhigt. TrueTemp verwendet so lange den letzten stabilen Messwert. Beruhigt er sich nicht innerhalb einer Stunde, wird der Fühler als nicht verfügbar behandelt. Häufige Ursache ist ein Template-Sensor, der 'unavailable' in 0 umwandelt: Gib ihm eine Verfügbarkeitsbedingung (availability). Diese Warnung verschwindet von selbst, sobald sich der Messwert beruhigt."
+    },
     "outdoor_sensor_unavailable": {
       "title": "TrueTemp ({name}) hat den Außensensor verloren",
       "description": "{entity_id} ist nicht erreichbar oder liefert keinen Zahlenwert, daher kann TrueTemp keinen kompensierten Wert veröffentlichen. Es wird weiter versucht; diese Meldung verschwindet von selbst, sobald der Sensor wieder lesbar ist."

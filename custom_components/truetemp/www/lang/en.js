@@ -69,7 +69,7 @@ export const STRINGS = {
   thRecovery: "Recovery °C/h",
   thSamples: "Samples",
   markerSeededTitle: "Offset seeded from the open-loop baseline when compensation was switched on, not yet confirmed by closed-loop samples here",
-  markerSpillTitle: "Extrapolated from the neighbouring band, not measured here",
+  markerSpillTitle: "Borrowed from the rest of the table, not measured here",
   markerPremeasuredTitle: "Pre-measurement: recorded with compensation off, before this band had a closed-loop sample",
   markerPremeasuredIndoor: ". Indoor settled at {value}",
   legendBase: "Highlighted row is the band in use now. Dimmed rows have no direct measurement yet",

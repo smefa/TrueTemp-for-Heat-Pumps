@@ -16,7 +16,7 @@ from homeassistant.components.select import SelectEntity
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.restore_state import RestoreEntity
+from homeassistant.helpers.restore_state import RestoreEntity, RestoredExtraData
 
 from . import TrueTempConfigEntry
 from .coordinator import TrueTempCoordinator
@@ -59,11 +59,21 @@ class _LiveSelect(TrueTempEntity, SelectEntity, RestoreEntity):
     def current_option(self) -> str:
         return getattr(self.coordinator, self._field)
 
+    @property
+    def extra_restore_state_data(self) -> RestoredExtraData:
+        return RestoredExtraData({"option": self.current_option})
+
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
-        last_state = await self.async_get_last_state()
-        if last_state is not None and last_state.state in self._attr_options:
-            setattr(self.coordinator, self._field, last_state.state)
+        # The saved extra data holds the real choice; the saved state would be
+        # "unavailable" if the entity was greyed out at shutdown.
+        last_extra = await self.async_get_last_extra_data()
+        restored = last_extra.as_dict().get("option") if last_extra else None
+        if restored is None:
+            last_state = await self.async_get_last_state()
+            restored = last_state.state if last_state is not None else None
+        if restored in self._attr_options:
+            setattr(self.coordinator, self._field, restored)
         # The coordinator's first refresh ran before this entity existed to
         # restore anything, on default-derived values that may already have
         # been pushed to hardware. Request a fresh cycle now rather than
@@ -103,6 +113,13 @@ class PriceComfortTierSelect(_LiveSelect):
     ) -> None:
         super().__init__(coordinator, entry)
         self._attr_unique_id = f"{entry.entry_id}_price_comfort_tier"
+
+    @property
+    def available(self) -> bool:
+        """Greyed out while price saving is switched off: the tier is ignored
+        then, so offering it as settable would be misleading. Toggling the
+        option reloads the entry, so this is re-read."""
+        return self.coordinator.price_enabled
 
 
 class ColdCautionSelect(_LiveSelect):

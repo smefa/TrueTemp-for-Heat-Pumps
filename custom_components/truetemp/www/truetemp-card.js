@@ -179,7 +179,11 @@ class TrueTempCard extends HTMLElement {
 
   set hass(hass) {
     this._hass = hass;
-    if (!this._entities) {
+    // Re-discover whenever the registry is replaced: a mode change creates
+    // and removes sensors, and a one-shot discovery would keep showing the
+    // old ones until the dashboard is reloaded.
+    if (!this._entities || hass.entities !== this._lastEntities) {
+      this._lastEntities = hass.entities;
       this._entities = this._discover(hass);
     }
     this._render();
@@ -310,10 +314,10 @@ class TrueTempCard extends HTMLElement {
         const seeded = b.seeded === true;
         if (seeded) hasSeeded = true;
         // A band can hold an offset on zero samples for two different reasons:
-        // seeded from the open-loop baseline on activation, or nudged by a
-        // neighbouring band's update without being credited a sample itself.
+        // seeded from the open-loop baseline on activation, or borrowed from
+        // the whole-house shared offset without being measured here.
         // Worth telling apart — one is open-loop evidence for this exact band,
-        // the other is a guess borrowed from next door.
+        // the other is a guess borrowed from the rest of the table.
         const spill = !seeded && samples === 0 && offsetC !== 0;
         if (spill) extrapolated = true;
         const marker = seeded

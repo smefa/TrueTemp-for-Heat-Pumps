@@ -35,6 +35,10 @@ table intact. Bumping the version here would cold-start every existing
 install's offset table just to gain a table that starts empty anyway, which is
 the same throwaway `learner.py`'s own docstring argues against.
 
+`shared_offset_c` (the whole-house part of the offset) follows the same rule:
+a payload without it loads as zero, which is what that install had in effect,
+so the upgrade keeps the learned table as it was.
+
 The rolling price-spread/median history (`PriceSpreadHistory` from
 `heuristic.py`, added for `heuristic.price_significance()`) follows the exact
 same rule: it lives under its own top-level `price_spread_history` key,
@@ -106,6 +110,7 @@ def serialize(
     state: LearnerState,
     lag_state: LagState,
     price_spread_history: PriceSpreadHistory | None = None,
+    outdoor_reference: tuple[float, float] | None = None,
 ) -> dict[str, Any]:
     """Convert learner + lag + price-spread-history state into a JSON-safe
     dict for the Store.
@@ -152,6 +157,7 @@ def serialize(
         "prev_target_c": state.prev_target_c,
         "prev_offset_c": state.prev_offset_c,
         "prev_is_active": state.prev_is_active,
+        "shared_offset_c": state.shared_offset_c,
         "lag": {
             "step_minutes": lag_state.step_minutes,
             "offsets_c": list(lag_state.offsets_c),
@@ -159,6 +165,11 @@ def serialize(
             "targets_c": list(lag_state.targets_c),
         },
     }
+    if outdoor_reference is not None:
+        payload["outdoor_reference"] = {
+            "value_c": outdoor_reference[0],
+            "at_s": outdoor_reference[1],
+        }
     if price_spread_history is not None:
         payload["price_spread_history"] = {
             "daily_spreads_c": list(price_spread_history.daily_spreads_c),
@@ -262,6 +273,29 @@ def _parse_baseline_bins(raw: Any) -> tuple[BaselineBin, ...] | None:
     return tuple(out)
 
 
+def outdoor_reference_from(data: Any) -> tuple[float, float] | None:
+    """The last good outdoor reading and its wall-clock time, or None.
+
+    Kept apart from `deserialize` on purpose: it belongs to the outdoor jump
+    guard, not to the learner, so a learner payload discarded for a version
+    mismatch still hands it back, and a missing or corrupt one costs nothing
+    but the guard's reference for the first reading after a restart.
+    """
+    if not isinstance(data, dict):
+        return None
+    raw = data.get("outdoor_reference")
+    if not isinstance(raw, dict):
+        return None
+    try:
+        value_c = float(raw["value_c"])
+        at_s = float(raw["at_s"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if not (math.isfinite(value_c) and math.isfinite(at_s)):
+        return None
+    return value_c, at_s
+
+
 def deserialize(
     data: Any,
 ) -> tuple[LearnerState, LagState, PriceSpreadHistory] | None:
@@ -340,6 +374,15 @@ def deserialize(
         # is exactly the state it was actually in.
         raw_prev_active = data.get("prev_is_active", False)
         prev_is_active = raw_prev_active if isinstance(raw_prev_active, bool) else False
+        # Same again: absent before the shared offset existed, and zero is
+        # exactly what such an install had in effect. An unreadable value is
+        # not worth the table, so it falls back to zero too.
+        try:
+            shared_offset_c = float(data.get("shared_offset_c", 0.0))
+        except (TypeError, ValueError):
+            shared_offset_c = 0.0
+        if not math.isfinite(shared_offset_c):
+            shared_offset_c = 0.0
     except (KeyError, TypeError, ValueError) as err:
         _LOGGER.debug("Learner state discarded: corrupt payload (%s)", err)
         return None
@@ -384,6 +427,7 @@ def deserialize(
         prev_bin_index=None,
         bin_entered_s=None,
         prev_is_active=prev_is_active,
+        shared_offset_c=shared_offset_c,
     )
 
     # The lag buffer is a pure optimisation — losing it costs a few days of
