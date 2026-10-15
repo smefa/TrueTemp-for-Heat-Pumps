@@ -349,6 +349,10 @@
     }
   },
   "issues": {
+    "outdoor_sensor_jumping": {
+      "title": "TrueTemp ({name}): utomhusgivaren hoppar",
+      "description": "{entity_id} hoppar mer än 2 °C och har inte stabiliserats på 15 minuter. TrueTemp använder under tiden den senaste stabila mätningen. Om den inte stabiliserats inom en timme behandlas givaren som otillgänglig. En vanlig orsak är en mallsensor som gör om 'unavailable' till 0: ge den ett tillgänglighetsvillkor (availability). Varningen försvinner av sig själv när mätningen stabiliserats."
+    },
     "outdoor_sensor_unavailable": {
       "title": "TrueTemp ({name}) har tappat utomhusgivaren",
       "description": "{entity_id} är otillgänglig eller rapporterar inget numeriskt värde, så TrueTemp kan inte publicera ett kompenserat värde. Den fortsätter försöka, och varningen försvinner av sig själv när givaren går att läsa igen."

@@ -349,6 +349,10 @@
     }
   },
   "issues": {
+    "outdoor_sensor_jumping": {
+      "title": "TrueTemp ({name}): the outdoor sensor keeps jumping",
+      "description": "{entity_id} keeps jumping by more than 2 °C and has not settled for 15 minutes. TrueTemp is using the last steady reading meanwhile. If it has not settled within an hour, the sensor is treated as unavailable. A template sensor that turns 'unavailable' into 0 is a common cause: give it an availability condition. This warning clears itself once the reading settles."
+    },
     "outdoor_sensor_unavailable": {
       "title": "TrueTemp ({name}) has lost its outdoor sensor",
       "description": "{entity_id} is unavailable or not reporting a number, so TrueTemp cannot publish a compensated value. It will keep retrying and this warning clears itself once the sensor is readable again."

@@ -110,6 +110,7 @@ def serialize(
     state: LearnerState,
     lag_state: LagState,
     price_spread_history: PriceSpreadHistory | None = None,
+    outdoor_reference: tuple[float, float] | None = None,
 ) -> dict[str, Any]:
     """Convert learner + lag + price-spread-history state into a JSON-safe
     dict for the Store.
@@ -164,6 +165,11 @@ def serialize(
             "targets_c": list(lag_state.targets_c),
         },
     }
+    if outdoor_reference is not None:
+        payload["outdoor_reference"] = {
+            "value_c": outdoor_reference[0],
+            "at_s": outdoor_reference[1],
+        }
     if price_spread_history is not None:
         payload["price_spread_history"] = {
             "daily_spreads_c": list(price_spread_history.daily_spreads_c),
@@ -265,6 +271,29 @@ def _parse_baseline_bins(raw: Any) -> tuple[BaselineBin, ...] | None:
     except (KeyError, TypeError, ValueError):
         return None
     return tuple(out)
+
+
+def outdoor_reference_from(data: Any) -> tuple[float, float] | None:
+    """The last good outdoor reading and its wall-clock time, or None.
+
+    Kept apart from `deserialize` on purpose: it belongs to the outdoor jump
+    guard, not to the learner, so a learner payload discarded for a version
+    mismatch still hands it back, and a missing or corrupt one costs nothing
+    but the guard's reference for the first reading after a restart.
+    """
+    if not isinstance(data, dict):
+        return None
+    raw = data.get("outdoor_reference")
+    if not isinstance(raw, dict):
+        return None
+    try:
+        value_c = float(raw["value_c"])
+        at_s = float(raw["at_s"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if not (math.isfinite(value_c) and math.isfinite(at_s)):
+        return None
+    return value_c, at_s
 
 
 def deserialize(

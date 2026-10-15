@@ -216,6 +216,36 @@ class TestBaselineTable:
         assert restored is not None
         assert restored.shared_offset_c == 0.0
 
+    def test_outdoor_reference_round_trips(self):
+        payload = store.serialize(
+            populated_state(), populated_lag(), outdoor_reference=(5.3, 1234.5)
+        )
+        assert store.outdoor_reference_from(payload) == (5.3, 1234.5)
+
+    def test_outdoor_reference_survives_a_discarded_learner_payload(self):
+        payload = store.serialize(
+            populated_state(), populated_lag(), outdoor_reference=(5.3, 1234.5)
+        )
+        payload["model_version"] = "something_else"
+        assert store.deserialize(payload) is None
+        assert store.outdoor_reference_from(payload) == (5.3, 1234.5)
+
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            None,
+            "x",
+            {},
+            {"value_c": "a", "at_s": 1.0},
+            {"value_c": float("inf"), "at_s": 1.0},
+        ],
+    )
+    def test_missing_or_corrupt_outdoor_reference_is_none(self, raw):
+        payload = store.serialize(populated_state(), populated_lag())
+        if raw is not None:
+            payload["outdoor_reference"] = raw
+        assert store.outdoor_reference_from(payload) is None
+
     def test_corrupt_baseline_drops_only_the_baseline(self):
         payload = store.serialize(populated_state(), populated_lag())
         payload["baseline_bins"][0]["indoor_c"] = float("nan")

@@ -114,7 +114,13 @@ Four questions:
   direct sun and draughts. Everything is learned from this reading, so a
   cupboard or a basement will teach it the wrong house.
 - **Outdoor temperature sensor.** A real sensor if you have one — usually more
-  accurate than a weather service estimate.
+  accurate than a weather service estimate. A reading that jumps more than 2 °C
+  is held until it has stayed put for 5 minutes, so a sensor that briefly
+  reports 0 during a restart never reaches the pump. A real 0 °C arrives
+  gradually and passes straight through. If the reading keeps jumping, a Repair
+  warning appears after 15 minutes, and after an hour the sensor is treated as
+  unavailable. A template sensor that turns `unavailable` into 0 is the usual
+  cause: give it an `availability` condition.
 - **The temperature you want.**
 - **Radiators, underfloor, or both.** Only used for the first few days, until
   it has measured your actual response times.

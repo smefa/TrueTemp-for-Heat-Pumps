@@ -44,6 +44,7 @@ from homeassistant.const import (
 from homeassistant.core import HomeAssistant, State
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.sun import get_astral_location
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -150,8 +151,16 @@ from .learner import (
 from .learner_store import (
     STORAGE_VERSION as LEARNER_STORAGE_VERSION,
     deserialize as learner_deserialize,
+    outdoor_reference_from,
     serialize as learner_serialize,
     store_key as learner_store_key,
+)
+from .outdoor_guard import (
+    GuardResult as OutdoorGuardResult,
+    GuardState as OutdoorGuardState,
+    check as outdoor_guard_check,
+    confirm_due_s as outdoor_guard_confirm_due_s,
+    source_lost as outdoor_guard_source_lost,
 )
 from .vacation import (
     ACTIVE_PHASES as VACATION_ACTIVE_PHASES,
@@ -370,6 +379,15 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
         # produces the zero-transition noise a rate estimator would from
         # irregular polling. See `_async_update_data`.
         self.price_spread_history: PriceSpreadHistory = initial_price_spread_history()
+        # Holds an outdoor reading that jumps until it proves real; see
+        # outdoor_guard.py. Its last good value is persisted with the learner.
+        self.outdoor_guard_state = OutdoorGuardState()
+        self.outdoor_guard_result: OutdoorGuardResult | None = None
+        # A held reading is re-checked when it becomes confirmable rather than
+        # at the next 15-minute poll; a sensor that does not change sends no
+        # state event to trigger it.
+        self._outdoor_confirm_unsub: Callable[[], None] | None = None
+        entry.async_on_unload(self._cancel_outdoor_confirm)
         self._store: Store[dict] = Store(
             hass, LEARNER_STORAGE_VERSION, learner_store_key(entry.entry_id)
         )
@@ -678,6 +696,7 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
 
     _SOURCE_ISSUE_KEYS = (
         "outdoor_sensor_unavailable",
+        "outdoor_sensor_jumping",
         "indoor_sensor_unavailable",
         "indoor_sensor_partial",
         "indoor_sensor_missing",
@@ -1356,7 +1375,10 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
         try:
             self._store.async_delay_save(
                 lambda: learner_serialize(
-                    self.learner_state, self.lag_state, self.price_spread_history
+                    self.learner_state,
+                    self.lag_state,
+                    self.price_spread_history,
+                    self._outdoor_reference(),
                 ),
                 LEARNER_STATE_SAVE_DELAY_SECONDS,
             )
@@ -1377,6 +1399,11 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
             return
         if stored is None:
             return
+        reference = outdoor_reference_from(stored)
+        if reference is not None:
+            self.outdoor_guard_state = OutdoorGuardState(
+                accepted_c=reference[0], accepted_at_s=reference[1]
+            )
         restored = learner_deserialize(stored)
         if restored is None:
             _LOGGER.info("Stored learned state was not usable; starting fresh")
@@ -1396,11 +1423,72 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
         try:
             await self._store.async_save(
                 learner_serialize(
-                    self.learner_state, self.lag_state, self.price_spread_history
+                    self.learner_state,
+                    self.lag_state,
+                    self.price_spread_history,
+                    self._outdoor_reference(),
                 )
             )
         except Exception as err:  # noqa: BLE001
             _LOGGER.warning("Could not save learned state (ignored): %s", err)
+
+    def _outdoor_reference(self) -> tuple[float, float] | None:
+        """The guard's last good outdoor reading and when it was taken."""
+        state = self.outdoor_guard_state
+        if state.accepted_c is None or state.accepted_at_s is None:
+            return None
+        return state.accepted_c, state.accepted_at_s
+
+    def _cancel_outdoor_confirm(self) -> None:
+        if self._outdoor_confirm_unsub is not None:
+            self._outdoor_confirm_unsub()
+            self._outdoor_confirm_unsub = None
+
+    async def _async_outdoor_confirm_due(self, _now: datetime) -> None:
+        self._outdoor_confirm_unsub = None
+        await self.async_request_refresh()
+
+    def _guard_outdoor_reading(self, reading_c: float) -> float:
+        """Pass the outdoor reading through the jump guard (outdoor_guard.py).
+
+        Warns once a jump has been held long enough to be more than a glitch,
+        and raises `UpdateFailed` once the guard gives up, so a reading that
+        never settles is handled exactly like an unavailable sensor.
+        """
+        entity_id = _entry_value(self.entry, CONF_OUTDOOR_TEMP_SENSOR, None)
+        was_held = self.outdoor_guard_result is not None and self.outdoor_guard_result.held
+        now_s = dt_util.utcnow().timestamp()
+        self.outdoor_guard_state, result = outdoor_guard_check(
+            self.outdoor_guard_state, reading_c, now_s
+        )
+        self.outdoor_guard_result = result
+        self._cancel_outdoor_confirm()
+        due_s = outdoor_guard_confirm_due_s(self.outdoor_guard_state)
+        if result.held and due_s is not None:
+            self._outdoor_confirm_unsub = async_call_later(
+                self.hass, max(1.0, due_s - now_s + 1.0), self._async_outdoor_confirm_due
+            )
+        if result.held and not was_held:
+            _LOGGER.info(
+                "Outdoor sensor %s jumped to %.1f °C; using %.1f °C until it settles",
+                entity_id,
+                reading_c,
+                self.outdoor_guard_state.accepted_c,
+            )
+        elif was_held and not result.held:
+            _LOGGER.info("Outdoor sensor %s settled at %.1f °C", entity_id, reading_c)
+        self._sync_source_issue(
+            "outdoor_sensor_jumping",
+            ok=not result.warn,
+            severity=ir.IssueSeverity.WARNING,
+            entity_id=entity_id,
+        )
+        if result.value_c is None:
+            raise UpdateFailed(
+                f"Outdoor temperature sensor {entity_id} has kept jumping for "
+                f"{result.held_minutes:.0f} min; treating it as unavailable"
+            )
+        return result.value_c
 
     async def async_reset_learning(self) -> None:
         """Forget the offset table and the lag buffer; start from a cold learner.
@@ -1415,7 +1503,9 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
         fresh_learner = learner_initial_state()
         fresh_lag = lag_initial_state(UPDATE_INTERVAL_MINUTES)
         await self._store.async_save(
-            learner_serialize(fresh_learner, fresh_lag, self.price_spread_history)
+            learner_serialize(
+                fresh_learner, fresh_lag, self.price_spread_history, self._outdoor_reference()
+            )
         )
         self.learner_state = fresh_learner
         self.lag_state = fresh_lag
@@ -1428,7 +1518,12 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
 
     async def _async_update_data(self) -> HeuristicResult:
         try:
-            raw_outdoor_temp_c = self._read_raw_outdoor_temp_c()
+            try:
+                reading_c = self._read_raw_outdoor_temp_c()
+            except UpdateFailed:
+                self.outdoor_guard_state = outdoor_guard_source_lost(self.outdoor_guard_state)
+                raise
+            raw_outdoor_temp_c = self._guard_outdoor_reading(reading_c)
         except UpdateFailed:
             self.last_error_at = dt_util.utcnow()
             self._sync_source_issue(
@@ -2175,6 +2270,14 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
             "indoor_sensor_readings": self.indoor_sensor_readings,
             "indoor_aggregation_mode": self.indoor_aggregation_mode,
             "raw_outdoor_temp_c": result.raw_outdoor_temp_c,
+            # What the sensor actually said, which differs from the value
+            # above only while the jump guard is holding it.
+            "outdoor_reading_c": (
+                self.outdoor_guard_result.reading_c if self.outdoor_guard_result else None
+            ),
+            "outdoor_reading_held": bool(
+                self.outdoor_guard_result and self.outdoor_guard_result.held
+            ),
             "wind_speed_ms": result.wind_speed_ms,
             "wind_ok": result.wind_data_available,
             "cloud_coverage_pct": result.cloud_coverage_pct,
