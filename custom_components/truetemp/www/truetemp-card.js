@@ -179,7 +179,11 @@ class TrueTempCard extends HTMLElement {
 
   set hass(hass) {
     this._hass = hass;
-    if (!this._entities) {
+    // Re-discover whenever the registry is replaced: a mode change creates
+    // and removes sensors, and a one-shot discovery would keep showing the
+    // old ones until the dashboard is reloaded.
+    if (!this._entities || hass.entities !== this._lastEntities) {
+      this._lastEntities = hass.entities;
       this._entities = this._discover(hass);
     }
     this._render();

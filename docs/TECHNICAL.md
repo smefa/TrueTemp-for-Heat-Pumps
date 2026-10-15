@@ -455,8 +455,8 @@ Nine per zone, plus the vacation-plan entities above.
 | --- | --- |
 | `climate.<name>` | The thermostat: target, on/off, price saving preset |
 | `sensor.<name>_compensated_outdoor_temperature` | The output when set to outdoor-sensor spoofing. Unavailable if you've picked one of the other two output modes instead |
-| `sensor.<name>_heat_pump_offset` | The output when set to write the pump's own heat-curve-offset input. Unavailable outside that mode — exactly one of these three is ever live |
-| `sensor.<name>_indoor_climate_target_temperature` | The target temperature pushed to a room-sensor `climate` entity when set to indoor-climate output mode. Unavailable outside that mode |
+| `sensor.<name>_heat_pump_offset` | The output when set to write the pump's own heat-curve-offset input. Only created in that mode — removed automatically when the mode changes |
+| `sensor.<name>_indoor_climate_target_temperature` | The target temperature pushed to a room-sensor `climate` entity when set to indoor-climate output mode. Only created in that mode — removed automatically when the mode changes |
 | `sensor.<name>_learned_offset` | What your house has taught it. **The one to graph** |
 | `sensor.<name>_status` | `ok` / `degraded` / `error`, plus everything about learning and the full output breakdown (every term and a plain-language reason) in attributes |
 | `switch.<name>_compensation_active` | Master on/off |

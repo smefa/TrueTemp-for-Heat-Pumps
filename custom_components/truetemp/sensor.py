@@ -25,8 +25,9 @@ it costs no registry entry and no recorder row of its own.
                                       indoor_climate_target / (compensated as
                                       *pushed* outdoor spoof) is ever the thing
                                       reaching the pump — see `output_mode` in
-                                      const.py. Unused mode outputs report
-                                      `available = False`.
+                                      const.py. Mode outputs the active mode
+                                      can't use are not created at all (and
+                                      are removed from the registry).
     learned_offset                    what the house has taught the controller.
                                       The one number genuinely worth graphing:
                                       it should be stable and season-shaped,
@@ -52,6 +53,7 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.const import EntityCategory, UnitOfTemperature
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -82,6 +84,13 @@ from .vacation import serialize_plans
 # disabled feature never hides a reading that was genuinely taken.
 ATTR_DISABLED = "disabled"
 
+# unique_id suffixes of the three output-mode sensors, for registry cleanup.
+_MODE_SENSOR_SUFFIXES = (
+    "compensated_outdoor_temperature",
+    "heat_pump_offset",
+    "indoor_climate_target_temperature",
+)
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -89,11 +98,33 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     coordinator = entry.runtime_data
+    mode = coordinator.output_mode
+
+    # Only the outputs the active mode can use get an entity; the rest used to
+    # sit there as "unavailable" and confuse people. A mode change in the
+    # options flow reloads the entry, so this runs again and swaps them.
+    mode_entities: list[SensorEntity] = []
+    if mode in (OUTPUT_MODE_OUTDOOR_SPOOF, OUTPUT_MODE_HEAT_CURVE_OFFSET):
+        mode_entities.append(CompensatedOutdoorTempSensor(coordinator, entry))
+    if mode == OUTPUT_MODE_HEAT_CURVE_OFFSET:
+        mode_entities.append(HeatPumpOffsetSensor(coordinator, entry))
+    if mode == OUTPUT_MODE_INDOOR_CLIMATE:
+        mode_entities.append(IndoorClimateTargetSensor(coordinator, entry))
+
+    # Drop registry entries left behind by earlier versions or a mode change.
+    keep = {e.unique_id for e in mode_entities}
+    registry = er.async_get(hass)
+    for suffix in _MODE_SENSOR_SUFFIXES:
+        unique_id = f"{entry.entry_id}_{suffix}"
+        if unique_id in keep:
+            continue
+        entity_id = registry.async_get_entity_id("sensor", DOMAIN, unique_id)
+        if entity_id:
+            registry.async_remove(entity_id)
+
     async_add_entities(
         [
-            CompensatedOutdoorTempSensor(coordinator, entry),
-            HeatPumpOffsetSensor(coordinator, entry),
-            IndoorClimateTargetSensor(coordinator, entry),
+            *mode_entities,
             LearnedOffsetSensor(coordinator, entry),
             StatusSensor(coordinator, entry),
             VacationStatusSensor(coordinator, entry),
