@@ -123,6 +123,8 @@ from .heuristic import (
     today_price_spread_and_median_c,
     update_price_spread_history,
 )
+from .sun_hold import SunHoldState
+from .sun_hold import next_hold as next_sun_hold
 from .holiday import (
     HOLIDAY_PHASE_RAMPING,
     HOLIDAY_PHASE_SETBACK,
@@ -497,6 +499,10 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
         self._last_price_forecast: tuple[tuple[float, float], ...] | None = None
         self._last_outdoor_forecast: tuple[tuple[float, float], ...] | None = None
         self._last_solar_forecast: tuple[tuple[float, float], ...] | None = None
+        # Sun pre-cool hold (sun_hold.py). Not persisted: a restart just
+        # drops the hold, which is the safe direction.
+        self._sun_hold = SunHoldState()
+        self._forecast_cloud_now_pct: float | None = None
 
     # --- Configuration views -------------------------------------------------
 
@@ -1102,6 +1108,7 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
         than in `heuristic.py` so that module never has to know what a
         datetime or a sun position is.
         """
+        self._forecast_cloud_now_pct = None
         if not self.lookahead_enabled or not hourly:
             return None, None, None
         now = dt_util.now()
@@ -1128,6 +1135,10 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
             ),
         )
         cloud_series = _forecast_offsets(hourly, now, "cloud_coverage", float)
+        # The forecast's cloud for the current hour (its entry at or before
+        # now), for the sun pre-cool hold's "forecast sun not showing up" check.
+        if cloud_series and cloud_series[0][0] <= 0.0:
+            self._forecast_cloud_now_pct = cloud_series[0][1]
         solar_series: tuple[tuple[float, float], ...] | None = None
         if cloud_series:
             try:
@@ -1784,6 +1795,15 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
             else 0.0
         )
 
+        sun_hold_c = self._next_sun_hold_c(
+            sun_elevation_deg,
+            sun_azimuth_deg,
+            solar_effect_of(sun_elevation_deg, sun_azimuth_deg, cloud_coverage_pct),
+            forecast_read.solar_series,
+            indoor_temp_c,
+            indoor_ok,
+        )
+
         result = compute(
             HeuristicInputs(
                 indoor_temp_c=indoor_temp_c,
@@ -1801,6 +1821,7 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
                 outdoor_forecast=forecast_read.outdoor_series,
                 wind_forecast_ms=forecast_read.wind_series,
                 solar_forecast=forecast_read.solar_series,
+                sun_precool_hold_c=sun_hold_c,
                 learned_offset_c=offset_c,
                 fall_minutes=lag.fall_minutes,
                 rise_minutes=lag.rise_minutes,
@@ -1822,6 +1843,37 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
             await self._log_data_point(result)
 
         return result
+
+    # --- Sun pre-cool hold ---------------------------------------------------
+
+    def _next_sun_hold_c(
+        self,
+        sun_elevation_deg: float,
+        sun_azimuth_deg: float,
+        live_effect: float,
+        solar_series: tuple[tuple[float, float], ...] | None,
+        indoor_temp_c: float | None,
+        indoor_ok: bool,
+    ) -> float:
+        """Level to hold the sun pre-cool at this cycle (0 = no hold)."""
+        forecast_now = (
+            solar_effect_of(sun_elevation_deg, sun_azimuth_deg, self._forecast_cloud_now_pct)
+            if self._forecast_cloud_now_pct is not None
+            else None
+        )
+        ahead = [v for t_h, v in solar_series or () if t_h > 0.0]
+        self._sun_hold, hold_c = next_sun_hold(
+            self._sun_hold,
+            now=dt_util.utcnow(),
+            enabled=self.solar_input_enabled and self.lookahead_enabled,
+            prev_precool_c=self.data.sun_precool_c if self.data else 0.0,
+            live_effect=live_effect,
+            forecast_now=forecast_now,
+            forecast_ahead_max=max(ahead) if ahead else None,
+            indoor_c=indoor_temp_c if indoor_ok else None,
+            target_c=self._effective_target_c,
+        )
+        return hold_c
 
     # --- Output push ---------------------------------------------------------
 

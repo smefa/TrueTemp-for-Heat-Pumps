@@ -179,6 +179,10 @@ WEATHER_PRERAMP_EPS_C = 0.2
 # starting magnitude as the shared budget until field data argues for a
 # different number.
 SOLAR_PRECOOL_MAX_C = 5.0
+# A sunny morning's pre-cool is held (by the coordinator, which owns the state)
+# at its highest level until the sun has passed its peak, because the house
+# keeps warming 2-3 h after the sun peaks. `HeuristicInputs.sun_precool_hold_c`
+# carries that level in; the pre-cool is never lower than it.
 
 # --- Price catch-up (feedforward kick) --------------------------------------
 # `max_sag_c`/`precharge_c` above are a comfort bound: how far indoor is
@@ -897,6 +901,11 @@ class HeuristicInputs:
     outdoor_forecast: tuple[tuple[float, float], ...] | None = None
     wind_forecast_ms: tuple[tuple[float, float], ...] | None = None
     solar_forecast: tuple[tuple[float, float], ...] | None = None
+    # Level the sun pre-cool is held at (>= 0), supplied by the coordinator:
+    # the highest pre-cool seen this sunny spell, kept until the sun has peaked
+    # or a safeguard releases it. 0 = no hold. Ignored unless solar input and
+    # weather lookahead are both on.
+    sun_precool_hold_c: float = 0.0
     # The learned offset from learner.py. This is the whole indoor-error
     # response — there is no separate proportional gain here any more.
     learned_offset_c: float = 0.0
@@ -1364,7 +1373,11 @@ def compute(inputs: HeuristicInputs, params: HeuristicParams) -> HeuristicResult
                 room_c = params.indoor_target_c - inputs.indoor_temp_c
                 if sun_precool_raw_c > 0.0:
                     sun_precool_raw_c -= room_c * params.spoof_per_indoor_c
-            sun_precool_c = _clamp(sun_precool_raw_c, 0.0, SOLAR_PRECOOL_MAX_C)
+            sun_precool_c = _clamp(
+                max(sun_precool_raw_c, inputs.sun_precool_hold_c),
+                0.0,
+                SOLAR_PRECOOL_MAX_C,
+            )
             sun_precool_in_min = None if sun_h is None else sun_h * 60.0
 
     compensated_outdoor_temp_c = _clamp(

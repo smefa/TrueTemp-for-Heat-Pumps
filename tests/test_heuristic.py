@@ -1966,3 +1966,31 @@ class TestSunPreCoolFreezesLearner:
         assert 0.0 < abs(result.sun_precool_c) <= WEATHER_PRERAMP_EPS_C
         assert not result.sun_precool_active
         assert "pre-cool" not in result.reason
+
+
+class TestSunPreCoolHold:
+    def test_hold_keeps_the_precool_up_when_the_forecast_fades(self):
+        held = compute(
+            make_inputs(
+                solar_forecast=((0.0, 0.4), (1.0, 0.4)),
+                fall_minutes=120.0,
+                sun_precool_hold_c=1.5,
+            ),
+            lookahead_params(enable_solar_input=True),
+        )
+        assert held.sun_precool_c == pytest.approx(1.5)
+        assert held.sun_precool_active
+
+    def test_hold_is_capped(self):
+        result = compute(
+            make_inputs(sun_precool_hold_c=99.0, solar_forecast=((0.0, 0.0),)),
+            lookahead_params(enable_solar_input=True),
+        )
+        assert result.sun_precool_c == SOLAR_PRECOOL_MAX_C
+
+    def test_hold_ignored_without_solar_input(self):
+        result = compute(
+            make_inputs(sun_precool_hold_c=1.5),
+            lookahead_params(enable_solar_input=False),
+        )
+        assert result.sun_precool_c == 0.0
