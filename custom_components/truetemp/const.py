@@ -277,7 +277,7 @@ STARTUP_GRACE_PERIOD_MINUTES = 5
 # changes — the main file or any of the language files.
 FRONTEND_STATIC_URL_PREFIX = "/truetemp"
 FRONTEND_CARD_URL = f"{FRONTEND_STATIC_URL_PREFIX}/truetemp-card.js"
-FRONTEND_JS_VERSION = "27"
+FRONTEND_JS_VERSION = "29"
 
 # The vacation-plans card is a second, independent bundle (see
 # www/truetemp-vacation-card.js's module docstring for why) with its own

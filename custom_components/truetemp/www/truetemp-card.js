@@ -526,6 +526,9 @@ class TrueTempCard extends HTMLElement {
     const [status, compensated, heatPumpOffset, offset, climate, tier, caution, vacation] = watched;
     const attrs = (status && status.attributes) || {};
     const offsetAttrs = (offset && offset.attributes) || {};
+    // The user's own input sensors (outdoor, single indoor, price), published
+    // by the status sensor so their cells can open history too.
+    const sourceEntities = attrs.source_entities || {};
 
     const active = attrs.active === true;
     const statusKey = status ? status.state : "error";
@@ -583,7 +586,7 @@ class TrueTempCard extends HTMLElement {
               "explainPublishing",
               publishEntity,
       ],
-                  [t.rowOutdoorNow, this._num(attrs.raw_outdoor_temp_c, 1, " °C"), "explainOutdoorNow"],
+                  [t.rowOutdoorNow, this._num(attrs.raw_outdoor_temp_c, 1, " °C"), "explainOutdoorNow", sourceEntities.outdoor],
     ];
     if (compensatedAvailable) {
       rows.push([
@@ -600,12 +603,12 @@ class TrueTempCard extends HTMLElement {
                     t.rowIndoorNow,
                     indoorValue,
                     indoorMulti ? "explainIndoorNowMulti" : "explainIndoorNow",
-                    null,
+                    sourceEntities.indoor,
                     indoorMulti
                       ? { mode: indoorModeLabel, usable: indoorUsable, total: indoorConfigured, list: indoorList || "—" }
                       : undefined,
                   ],
-                  [t.rowSetTemp, this._num(attrs.user_indoor_target_c, 1, " °C"), "explainSetTemp"],
+                  [t.rowSetTemp, this._num(attrs.user_indoor_target_c, 1, " °C"), "explainSetTemp", this._entities.climate],
     );
 
     // Absent rather than false, same as the sources chips below: these three
@@ -663,7 +666,7 @@ class TrueTempCard extends HTMLElement {
     ];
 
     const priceAlways = [
-      [t.priceNow, this._num(attrs.current_price, 2), "explainPriceNow"],
+      [t.priceNow, this._num(attrs.current_price, 2), "explainPriceNow", sourceEntities.price],
       [t.todaysMedian, this._num(attrs.price_median, 2), "explainTodaysMedian"],
     ];
 
@@ -673,7 +676,14 @@ class TrueTempCard extends HTMLElement {
       [t.nextSpikeIn, this._num(attrs.upcoming_spike_in_min, 0, " min"), "explainNextSpikeIn"],
       [t.allowedSag, this._num(attrs.allowed_sag_c, 2, " °C"), "explainAllowedSag"],
       [t.coldBrake, this._num(attrs.cold_brake_factor, 2, "×"), "explainColdBrake"],
-      [t.savingLevel, (tier && tier.state) || "—", "explainSavingLevel", this._entities.tier],
+      // The select goes unavailable when price saving is off; show that as
+      // "disabled" like the other price terms, not as the raw "unavailable".
+      [
+        t.savingLevel,
+        priceDisabled || (tier && tier.state === "unavailable") ? DISABLED : (tier && tier.state) || "—",
+        "explainSavingLevel",
+        this._entities.tier,
+      ],
       [t.coldCaution, (caution && caution.state) || "—", "explainColdCaution", this._entities.caution],
       [t.preBrakeLead, this._num(attrs.lead_minutes_effective, 0, " min"), "explainPreBrakeLead"],
     ];

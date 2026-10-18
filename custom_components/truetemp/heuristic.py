@@ -141,7 +141,7 @@ OUTPUT_SANITY_MAX_C = 25.0
 # Feedforward gains for the two optional weather inputs. See the module
 # docstring for why these are constants rather than configuration or learned
 # parameters. Units: degC of outdoor spoof per unit of input.
-SOLAR_GAIN_C = 7.0
+SOLAR_GAIN_C = 11.0
 WIND_GAIN_C_PER_MS = 0.3
 # Below this the wind term is a breeze, not a draught: contributes exactly 0
 # rather than a tiny, mostly-noise correction. The gain applies to the speed
@@ -178,7 +178,11 @@ WEATHER_PRERAMP_EPS_C = 0.2
 # (worst case if wrong: briefly a bit cold with no sun to cover it). Same
 # starting magnitude as the shared budget until field data argues for a
 # different number.
-SOLAR_PRECOOL_MAX_C = 3.0
+SOLAR_PRECOOL_MAX_C = 5.0
+# A sunny morning's pre-cool is held (by the coordinator, which owns the state)
+# at its highest level until the sun has passed its peak, because the house
+# keeps warming 2-3 h after the sun peaks. `HeuristicInputs.sun_precool_hold_c`
+# carries that level in; the pre-cool is never lower than it.
 
 # --- Price catch-up (feedforward kick) --------------------------------------
 # `max_sag_c`/`precharge_c` above are a comfort bound: how far indoor is
@@ -897,6 +901,11 @@ class HeuristicInputs:
     outdoor_forecast: tuple[tuple[float, float], ...] | None = None
     wind_forecast_ms: tuple[tuple[float, float], ...] | None = None
     solar_forecast: tuple[tuple[float, float], ...] | None = None
+    # Level the sun pre-cool is held at (>= 0), supplied by the coordinator:
+    # the highest pre-cool seen this sunny spell, kept until the sun has peaked
+    # or a safeguard releases it. 0 = no hold. Ignored unless solar input and
+    # weather lookahead are both on.
+    sun_precool_hold_c: float = 0.0
     # The learned offset from learner.py. This is the whole indoor-error
     # response — there is no separate proportional gain here any more.
     learned_offset_c: float = 0.0
@@ -1356,11 +1365,19 @@ def compute(inputs: HeuristicInputs, params: HeuristicParams) -> HeuristicResult
             # Only the part of the coming sun gain that would carry indoor
             # past target is worth backing off for: a house already below
             # target has that much room to absorb the sun, so the deficit
-            # (as outdoor spoof) is netted off. Unknown indoor -> no netting.
+            # (as outdoor spoof) is netted off. A house already ABOVE target
+            # has negative room, so the excess is added: it starts the sunny
+            # spell over target and needs to back off harder. Only when sun
+            # is actually coming (raw > 0). Unknown indoor -> no netting.
             if inputs.indoor_data_available and inputs.indoor_temp_c is not None:
-                room_c = max(0.0, params.indoor_target_c - inputs.indoor_temp_c)
-                sun_precool_raw_c -= room_c * params.spoof_per_indoor_c
-            sun_precool_c = _clamp(sun_precool_raw_c, 0.0, SOLAR_PRECOOL_MAX_C)
+                room_c = params.indoor_target_c - inputs.indoor_temp_c
+                if sun_precool_raw_c > 0.0:
+                    sun_precool_raw_c -= room_c * params.spoof_per_indoor_c
+            sun_precool_c = _clamp(
+                max(sun_precool_raw_c, inputs.sun_precool_hold_c),
+                0.0,
+                SOLAR_PRECOOL_MAX_C,
+            )
             sun_precool_in_min = None if sun_h is None else sun_h * 60.0
 
     compensated_outdoor_temp_c = _clamp(
