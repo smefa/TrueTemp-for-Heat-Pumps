@@ -477,7 +477,7 @@ class TestBlending:
             state, make_inputs(indoor_temp_c=20.5, outdoor_temp_c=outdoor)
         )
         moved = learner.hold_offset_at(after.bins, after.shared_offset_c, outdoor)
-        expected = -0.5 * 0.25 / result.tau_i_h
+        expected = -0.5 * learner.COLD_LEARN_GAIN * 0.25 / result.tau_i_h
         assert moved - before == pytest.approx(expected)
 
     def test_one_step_is_exact_next_to_an_unvisited_band(self):
@@ -490,7 +490,9 @@ class TestBlending:
             state, make_inputs(indoor_temp_c=20.5, outdoor_temp_c=outdoor)
         )
         moved = learner.hold_offset_at(after.bins, after.shared_offset_c, outdoor)
-        assert moved - before == pytest.approx(-0.5 * 0.25 / result.tau_i_h)
+        assert moved - before == pytest.approx(
+            -0.5 * learner.COLD_LEARN_GAIN * 0.25 / result.tau_i_h
+        )
 
     def test_entering_an_unvisited_band_starts_where_it_was_interpolated(self):
         """A first visit must not itself move the output."""
@@ -619,6 +621,37 @@ class TestWeatherPreramp:
         )
         _, plain = learner.step(state, make_inputs(indoor_temp_c=21.4))
         assert ramp.hold_offset_c == pytest.approx(plain.hold_offset_c)
+
+
+class TestColdLearning:
+    def test_cold_house_is_learned_from_during_a_preramp(self):
+        state = mature_state()
+        after, result = learner.step(
+            state,
+            make_inputs(indoor_temp_c=20.5, weather_preramp=True, weather_preramp_c=-1.2),
+        )
+        assert not result.frozen
+        assert after.total_samples == state.total_samples + 1
+        assert result.hold_offset_c < 0
+
+    def test_noise_below_target_does_not_lift_the_preramp_freeze(self):
+        _, result = learner.step(
+            mature_state(),
+            make_inputs(indoor_temp_c=20.9, weather_preramp=True, weather_preramp_c=-1.2),
+        )
+        assert result.frozen
+
+    def test_cold_is_learned_faster_than_warm(self):
+        state = mature_state()
+        _, cold = learner.step(state, make_inputs(indoor_temp_c=20.5))
+        _, warm = learner.step(state, make_inputs(indoor_temp_c=21.5))
+        assert abs(cold.hold_offset_c - state_hold(state)) == pytest.approx(
+            learner.COLD_LEARN_GAIN * abs(warm.hold_offset_c - state_hold(state))
+        )
+
+
+def state_hold(state):
+    return learner.hold_offset_at(state.bins, state.shared_offset_c, make_inputs().outdoor_temp_c)
 
 
 class TestRecoverableSag:

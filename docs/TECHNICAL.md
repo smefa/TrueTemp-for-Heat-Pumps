@@ -290,7 +290,11 @@ cannot stack into an overshoot. While the pre-ramp is acting, learning pauses
 (`learning_paused_because` says so), because the house is deliberately being
 held above target and the learner must not integrate that away. The exception
 is a house already warmer than the pre-ramp asks for: it keeps learning from
-the excess, so a warm afternoon is not held warm all evening.
+the excess, so a warm afternoon is not held warm all evening. The other is a
+house more than 0.2 °C *below* target: the pre-ramp is not holding it anywhere,
+so learning resumes from the full shortfall. Cold errors are integrated twice as
+fast as warm ones (`COLD_LEARN_GAIN`), because overshoot costs little and a cold
+house costs comfort.
 
 Wind's share only counts if the wind term is switched on; the outdoor share
 needs nothing but a weather entity. If the weather integration provides no
