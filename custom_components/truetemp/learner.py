@@ -206,6 +206,11 @@ COLD_LEARN_GAIN = 2.0
 # Below target by more than this counts as cold for lifting the pre-ramp freeze.
 # Just above sensor resolution, so noise around the target never lifts it.
 COLD_LEARN_MIN_ERROR_C = 0.2
+# Solar gain (indoor degrees) above which a house at or above target is not
+# learned from. The sun adjustment already takes that warmth out of the output;
+# letting the band learn it too raises the band on sunny days and carries it
+# into every cloudy day and night at the same outdoor temperature.
+SUN_LEARN_MIN_GAIN_C = 0.3
 
 # --- Authority ------------------------------------------------------------
 # The offset clamp opens as evidence accumulates, so a fresh install ships
@@ -596,6 +601,8 @@ def _freeze_reason(inputs: LearnerInputs, state: LearnerState) -> str | None:
         return "anticipating a weather change, holding the house above target"
     if inputs.sun_precool:
         return "anticipating more sun, holding the house below target"
+    if inputs.estimated_solar_gain_c > SUN_LEARN_MIN_GAIN_C and not _house_is_cold(inputs):
+        return "sun is warming the house, the sun adjustment covers that"
     if inputs.vacation_feedforward:
         return "vacation setback/catch-up is holding away from the occupied target"
     if state.holdoff_until_s is not None and inputs.now_s < state.holdoff_until_s:

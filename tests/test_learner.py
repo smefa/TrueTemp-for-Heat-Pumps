@@ -650,6 +650,33 @@ class TestColdLearning:
         )
 
 
+class TestSunLearning:
+    def test_warmth_while_the_sun_shines_is_not_learned(self):
+        state = mature_state()
+        after, result = learner.step(
+            state, make_inputs(indoor_temp_c=22.0, estimated_solar_gain_c=1.5)
+        )
+        assert result.frozen
+        assert "sun" in result.freeze_reason
+        assert after.bins == state.bins
+        assert after.total_samples == state.total_samples
+
+    def test_weak_sun_does_not_freeze(self):
+        _, result = learner.step(
+            mature_state(), make_inputs(indoor_temp_c=22.0, estimated_solar_gain_c=0.1)
+        )
+        assert not result.frozen
+
+    def test_cold_house_is_still_learned_from_in_sun(self):
+        state = mature_state()
+        after, result = learner.step(
+            state, make_inputs(indoor_temp_c=20.5, estimated_solar_gain_c=1.5)
+        )
+        assert not result.frozen
+        assert result.hold_offset_c < 0
+        assert after.total_samples == state.total_samples + 1
+
+
 def state_hold(state):
     return learner.hold_offset_at(state.bins, state.shared_offset_c, make_inputs().outdoor_temp_c)
 

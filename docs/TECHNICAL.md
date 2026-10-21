@@ -296,6 +296,12 @@ so learning resumes from the full shortfall. Cold errors are integrated twice as
 fast as warm ones (`COLD_LEARN_GAIN`), because overshoot costs little and a cold
 house costs comfort.
 
+Learning also pauses while the sun is warming a house that is at or above
+target (estimated solar gain above 0.3 °C). The sun adjustment already takes
+that warmth out of the output; if the band learned it too, sunny days would
+push the band up and every cloudy day or night at that outdoor temperature
+would run cold. A cold house is still learned from in sun.
+
 Wind's share only counts if the wind term is switched on; the outdoor share
 needs nothing but a weather entity. If the weather integration provides no
 *hourly* forecast, the whole thing quietly contributes zero.
