@@ -515,6 +515,13 @@ def initial_state() -> LearnerState:
     return LearnerState()
 
 
+def reset_bin(state: LearnerState, index: int) -> LearnerState:
+    """Forget one band's own learned part. The shared part and the other bands stay."""
+    index = max(0, min(N_BINS - 1, index))
+    bins = tuple(OutdoorBin() if i == index else b for i, b in enumerate(state.bins))
+    return replace(state, bins=bins)
+
+
 def authority_for(total_samples: int) -> float:
     """The offset clamp, widening with accumulated evidence."""
     progress = _clamp(total_samples / float(AUTHORITY_RAMP_SAMPLES), 0.0, 1.0)

@@ -922,3 +922,13 @@ class TestBaselineSeeding:
             learner.initial_state().bins, self._baseline(19.0), 21.0
         )
         assert learner.coverage_of(bins) == 0.0
+
+
+def test_reset_bin_clears_only_that_band():
+    n = learner.N_BINS
+    bins = tuple(OutdoorBin(hold_offset_c=1.0 + i, samples=10) for i in range(n))
+    state = LearnerState(bins=bins, shared_offset_c=0.7)
+    out = learner.reset_bin(state, 3)
+    assert out.bins[3] == OutdoorBin()
+    assert all(out.bins[i] == bins[i] for i in range(n) if i != 3)
+    assert out.shared_offset_c == 0.7

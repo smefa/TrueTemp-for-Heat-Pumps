@@ -113,6 +113,11 @@ reset_learning:
       selector:
         config_entry:
           integration: truetemp
+    current_band_only:
+      required: false
+      default: false
+      selector:
+        boolean:
 
 vacation_plan_reorder:
   fields:

@@ -30,6 +30,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 import aiohttp
+from homeassistant.exceptions import ServiceValidationError
 from astral.sun import azimuth as astral_azimuth
 from astral.sun import elevation as astral_elevation
 from homeassistant.components import persistent_notification
@@ -148,6 +149,7 @@ from .learner import (
     LearnerState,
     initial_state as learner_initial_state,
     recoverable_sag_c,
+    reset_bin as learner_reset_bin,
     step as learner_step,
 )
 from .learner_store import (
@@ -1542,6 +1544,30 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
         self.lag_result = None
         self._learner_last_step_s = None
         await self.async_request_refresh()
+
+    async def async_reset_current_band(self) -> int:
+        """Forget what the band the outdoor temperature is in has learned.
+
+        Returns the band index that was reset. The other bands, the shared
+        part, the lag estimate and the price history are kept. Persisted
+        first, like `async_reset_learning`, so a failed write is raised and
+        the old band does not come back on restart.
+        """
+        index = self.learner_state.prev_bin_index
+        if index is None:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN, translation_key="service_no_current_band"
+            )
+        fresh_learner = learner_reset_bin(self.learner_state, index)
+        await self._store.async_save(
+            learner_serialize(
+                fresh_learner, self.lag_state, self.price_spread_history, self._outdoor_reference()
+            )
+        )
+        self.learner_state = fresh_learner
+        self.learner_result = None
+        await self.async_request_refresh()
+        return index
 
     # --- The cycle -----------------------------------------------------------
 

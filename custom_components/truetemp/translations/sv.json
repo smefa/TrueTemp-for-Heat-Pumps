@@ -397,6 +397,9 @@
     "service_entry_not_loaded": {
       "message": "Den TrueTemp-zonen körs inte just nu."
     },
+    "service_no_current_band": {
+      "message": "Zonen har inte valt något utomhusband än. Försök igen efter första uppdateringen."
+    },
     "vacation_service_missing_fields": {
       "message": "Den planen saknar ett fält som dess återkommandetyp behöver."
     },
@@ -415,7 +418,8 @@
       "name": "Nollställ inlärd data",
       "description": "Radera det zonen har lärt sig (offsettabellen och uppskattningen av svarstid) och börja om. Använd efter byte av ute- eller innegivare. Inställningar och scheman behålls. Går inte att ångra.",
       "fields": {
-        "config_entry_id": { "name": "Zon", "description": "Vilken TrueTemp-zon som ska nollställas." }
+        "config_entry_id": { "name": "Zon", "description": "Vilken TrueTemp-zon som ska nollställas." },
+        "current_band_only": { "name": "Bara nuvarande band", "description": "Nollställ bara det utomhusband zonen befinner sig i nu. Övriga band, den gemensamma offseten och svarstidsuppskattningen behålls." }
       }
     },
     "vacation_plan_set": {
