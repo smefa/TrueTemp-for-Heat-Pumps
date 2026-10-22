@@ -47,7 +47,7 @@ from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.storage import Store
-from homeassistant.helpers.sun import get_astral_location
+from homeassistant.helpers.sun import get_astral_observer
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 from homeassistant.util.unit_conversion import SpeedConverter, TemperatureConverter
@@ -1144,16 +1144,16 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
         solar_series: tuple[tuple[float, float], ...] | None = None
         if cloud_series:
             try:
-                location, _ = get_astral_location(self.hass)
+                observer = get_astral_observer(self.hass)
                 solar_series = tuple(
                     (
                         t_h,
                         solar_effect_of(
                             astral_elevation(
-                                location.observer, now + timedelta(hours=t_h)
+                                observer, now + timedelta(hours=t_h)
                             ),
                             astral_azimuth(
-                                location.observer, now + timedelta(hours=t_h)
+                                observer, now + timedelta(hours=t_h)
                             ),
                             cloud,
                         ),
