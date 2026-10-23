@@ -927,8 +927,11 @@ class TestBaselineSeeding:
 def test_reset_bin_clears_only_that_band():
     n = learner.N_BINS
     bins = tuple(OutdoorBin(hold_offset_c=1.0 + i, samples=10) for i in range(n))
-    state = LearnerState(bins=bins, shared_offset_c=0.7)
+    baselines = tuple(learner.BaselineBin(indoor_c=18.0 + i, samples=4) for i in range(n))
+    state = LearnerState(bins=bins, baseline_bins=baselines, shared_offset_c=0.7)
     out = learner.reset_bin(state, 3)
     assert out.bins[3] == OutdoorBin()
+    assert out.baseline_bins[3] == learner.BaselineBin()
     assert all(out.bins[i] == bins[i] for i in range(n) if i != 3)
+    assert all(out.baseline_bins[i] == baselines[i] for i in range(n) if i != 3)
     assert out.shared_offset_c == 0.7

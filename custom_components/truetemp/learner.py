@@ -516,10 +516,17 @@ def initial_state() -> LearnerState:
 
 
 def reset_bin(state: LearnerState, index: int) -> LearnerState:
-    """Forget one band's own learned part. The shared part and the other bands stay."""
+    """Forget one band's learned part and its baseline. The shared part and the other bands stay.
+
+    The baseline goes too: it seeds the band's offset the next time compensation
+    switches on, which would bring back what was just reset.
+    """
     index = max(0, min(N_BINS - 1, index))
     bins = tuple(OutdoorBin() if i == index else b for i, b in enumerate(state.bins))
-    return replace(state, bins=bins)
+    baseline_bins = tuple(
+        BaselineBin() if i == index else b for i, b in enumerate(state.baseline_bins)
+    )
+    return replace(state, bins=bins, baseline_bins=baseline_bins)
 
 
 def authority_for(total_samples: int) -> float:

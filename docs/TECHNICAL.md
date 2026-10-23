@@ -445,7 +445,8 @@ no card or entity: run it from Developer Tools → Actions after replacing the
 outdoor or indoor sensor. It resets the offset table and the lag buffer to a
 cold start and saves immediately; the price-spread history is kept.
 With `current_band_only: true` it resets only the band the outdoor temperature
-is in now (`prev_bin_index`); other bands, the shared offset and the lag buffer stay.
+is in now (`prev_bin_index`), together with that band's open-loop baseline; other
+bands, the shared offset and the lag buffer stay.
 
 `vacation_plan_set` runs the same overlap check as the options flow and
 raises a translated `ServiceValidationError` (readable in the Developer
