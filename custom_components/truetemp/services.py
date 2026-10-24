@@ -60,7 +60,12 @@ SERVICE_RESET_LEARNING = "reset_learning"
 
 _SERVICES_REGISTERED = f"{DOMAIN}_services_registered"
 
-_RESET_LEARNING_SCHEMA = vol.Schema({vol.Required("config_entry_id"): cv.string})
+_RESET_LEARNING_SCHEMA = vol.Schema(
+    {
+        vol.Required("config_entry_id"): cv.string,
+        vol.Optional("current_band_only", default=False): cv.boolean,
+    }
+)
 
 _WEEKDAY = vol.All(vol.Coerce(int), vol.Range(min=0, max=6))
 _MONTH = vol.All(vol.Coerce(int), vol.Range(min=1, max=12))
@@ -248,7 +253,10 @@ async def _async_handle_reset_learning(call: ServiceCall) -> None:
         raise ServiceValidationError(
             translation_domain=DOMAIN, translation_key="service_entry_not_loaded"
         )
-    await entry.runtime_data.async_reset_learning()
+    if call.data["current_band_only"]:
+        await entry.runtime_data.async_reset_current_band()
+    else:
+        await entry.runtime_data.async_reset_learning()
 
 
 def async_register_services(hass: HomeAssistant) -> None:

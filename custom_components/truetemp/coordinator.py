@@ -30,6 +30,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 import aiohttp
+from homeassistant.exceptions import ServiceValidationError
 from astral.sun import azimuth as astral_azimuth
 from astral.sun import elevation as astral_elevation
 from homeassistant.components import persistent_notification
@@ -46,7 +47,17 @@ from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.storage import Store
-from homeassistant.helpers.sun import get_astral_location
+try:
+    from homeassistant.helpers.sun import get_astral_observer
+except ImportError:  # pragma: no cover - Home Assistant before get_astral_observer
+
+    def get_astral_observer(hass: HomeAssistant):  # type: ignore[no-redef]
+        """Observer for the configured location, from the older helper."""
+        from homeassistant.helpers.sun import get_astral_location
+
+        location, _ = get_astral_location(hass)
+        return location.observer
+
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 from homeassistant.util.unit_conversion import SpeedConverter, TemperatureConverter
@@ -148,6 +159,7 @@ from .learner import (
     LearnerState,
     initial_state as learner_initial_state,
     recoverable_sag_c,
+    reset_bin as learner_reset_bin,
     step as learner_step,
 )
 from .learner_store import (
@@ -1142,16 +1154,16 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
         solar_series: tuple[tuple[float, float], ...] | None = None
         if cloud_series:
             try:
-                location, _ = get_astral_location(self.hass)
+                observer = get_astral_observer(self.hass)
                 solar_series = tuple(
                     (
                         t_h,
                         solar_effect_of(
                             astral_elevation(
-                                location.observer, now + timedelta(hours=t_h)
+                                observer, now + timedelta(hours=t_h)
                             ),
                             astral_azimuth(
-                                location.observer, now + timedelta(hours=t_h)
+                                observer, now + timedelta(hours=t_h)
                             ),
                             cloud,
                         ),
@@ -1542,6 +1554,34 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
         self.lag_result = None
         self._learner_last_step_s = None
         await self.async_request_refresh()
+
+    async def async_reset_current_band(self) -> int:
+        """Forget what the band the outdoor temperature is in has learned.
+
+        Returns the band index that was reset. The band's open-loop baseline
+        goes with its learned part. The other bands, the shared part, the lag
+        estimate and the price history are kept. Persisted first, like
+        `async_reset_learning`, so a failed write is raised and the old band
+        does not come back on restart.
+        """
+        index = self.learner_state.prev_bin_index
+        if index is None:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN, translation_key="service_no_current_band"
+            )
+        fresh_learner = learner_reset_bin(self.learner_state, index)
+        await self._store.async_save(
+            learner_serialize(
+                fresh_learner, self.lag_state, self.price_spread_history, self._outdoor_reference()
+            )
+        )
+        self.learner_state = fresh_learner
+        self.learner_result = None
+        # Step on the refresh below rather than waiting out the learner clock:
+        # with no result the shared part would drop out of the output until then.
+        self._learner_last_step_s = None
+        await self.async_request_refresh()
+        return index
 
     # --- The cycle -----------------------------------------------------------
 

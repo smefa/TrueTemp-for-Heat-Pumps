@@ -477,7 +477,7 @@ class TestBlending:
             state, make_inputs(indoor_temp_c=20.5, outdoor_temp_c=outdoor)
         )
         moved = learner.hold_offset_at(after.bins, after.shared_offset_c, outdoor)
-        expected = -0.5 * 0.25 / result.tau_i_h
+        expected = -0.5 * learner.COLD_LEARN_GAIN * 0.25 / result.tau_i_h
         assert moved - before == pytest.approx(expected)
 
     def test_one_step_is_exact_next_to_an_unvisited_band(self):
@@ -490,7 +490,9 @@ class TestBlending:
             state, make_inputs(indoor_temp_c=20.5, outdoor_temp_c=outdoor)
         )
         moved = learner.hold_offset_at(after.bins, after.shared_offset_c, outdoor)
-        assert moved - before == pytest.approx(-0.5 * 0.25 / result.tau_i_h)
+        assert moved - before == pytest.approx(
+            -0.5 * learner.COLD_LEARN_GAIN * 0.25 / result.tau_i_h
+        )
 
     def test_entering_an_unvisited_band_starts_where_it_was_interpolated(self):
         """A first visit must not itself move the output."""
@@ -619,6 +621,64 @@ class TestWeatherPreramp:
         )
         _, plain = learner.step(state, make_inputs(indoor_temp_c=21.4))
         assert ramp.hold_offset_c == pytest.approx(plain.hold_offset_c)
+
+
+class TestColdLearning:
+    def test_cold_house_is_learned_from_during_a_preramp(self):
+        state = mature_state()
+        after, result = learner.step(
+            state,
+            make_inputs(indoor_temp_c=20.5, weather_preramp=True, weather_preramp_c=-1.2),
+        )
+        assert not result.frozen
+        assert after.total_samples == state.total_samples + 1
+        assert result.hold_offset_c < 0
+
+    def test_noise_below_target_does_not_lift_the_preramp_freeze(self):
+        _, result = learner.step(
+            mature_state(),
+            make_inputs(indoor_temp_c=20.9, weather_preramp=True, weather_preramp_c=-1.2),
+        )
+        assert result.frozen
+
+    def test_cold_is_learned_faster_than_warm(self):
+        state = mature_state()
+        _, cold = learner.step(state, make_inputs(indoor_temp_c=20.5))
+        _, warm = learner.step(state, make_inputs(indoor_temp_c=21.5))
+        assert abs(cold.hold_offset_c - state_hold(state)) == pytest.approx(
+            learner.COLD_LEARN_GAIN * abs(warm.hold_offset_c - state_hold(state))
+        )
+
+
+class TestSunLearning:
+    def test_warmth_while_the_sun_shines_is_not_learned(self):
+        state = mature_state()
+        after, result = learner.step(
+            state, make_inputs(indoor_temp_c=22.0, estimated_solar_gain_c=1.5)
+        )
+        assert result.frozen
+        assert "sun" in result.freeze_reason
+        assert after.bins == state.bins
+        assert after.total_samples == state.total_samples
+
+    def test_weak_sun_does_not_freeze(self):
+        _, result = learner.step(
+            mature_state(), make_inputs(indoor_temp_c=22.0, estimated_solar_gain_c=0.1)
+        )
+        assert not result.frozen
+
+    def test_cold_house_is_still_learned_from_in_sun(self):
+        state = mature_state()
+        after, result = learner.step(
+            state, make_inputs(indoor_temp_c=20.5, estimated_solar_gain_c=1.5)
+        )
+        assert not result.frozen
+        assert result.hold_offset_c < 0
+        assert after.total_samples == state.total_samples + 1
+
+
+def state_hold(state):
+    return learner.hold_offset_at(state.bins, state.shared_offset_c, make_inputs().outdoor_temp_c)
 
 
 class TestRecoverableSag:
@@ -862,3 +922,16 @@ class TestBaselineSeeding:
             learner.initial_state().bins, self._baseline(19.0), 21.0
         )
         assert learner.coverage_of(bins) == 0.0
+
+
+def test_reset_bin_clears_only_that_band():
+    n = learner.N_BINS
+    bins = tuple(OutdoorBin(hold_offset_c=1.0 + i, samples=10) for i in range(n))
+    baselines = tuple(learner.BaselineBin(indoor_c=18.0 + i, samples=4) for i in range(n))
+    state = LearnerState(bins=bins, baseline_bins=baselines, shared_offset_c=0.7)
+    out = learner.reset_bin(state, 3)
+    assert out.bins[3] == OutdoorBin()
+    assert out.baseline_bins[3] == learner.BaselineBin()
+    assert all(out.bins[i] == bins[i] for i in range(n) if i != 3)
+    assert all(out.baseline_bins[i] == baselines[i] for i in range(n) if i != 3)
+    assert out.shared_offset_c == 0.7

@@ -397,6 +397,9 @@
     "service_entry_not_loaded": {
       "message": "That TrueTemp zone is not running right now."
     },
+    "service_no_current_band": {
+      "message": "This zone has not picked an outdoor band yet. Try again after its first update."
+    },
     "vacation_service_missing_fields": {
       "message": "That plan is missing a field its recurrence type needs."
     },
@@ -415,7 +418,8 @@
       "name": "Reset learned data",
       "description": "Erase what this zone has learned (offset table and response-time estimate) and start over. Use after replacing the outdoor or indoor sensor. Settings and schedules are kept. This cannot be undone.",
       "fields": {
-        "config_entry_id": { "name": "Zone", "description": "Which TrueTemp zone to reset." }
+        "config_entry_id": { "name": "Zone", "description": "Which TrueTemp zone to reset." },
+        "current_band_only": { "name": "Current band only", "description": "Reset only the outdoor-temperature band the zone is in now. Other bands, the shared offset and the response-time estimate are kept." }
       }
     },
     "vacation_plan_set": {

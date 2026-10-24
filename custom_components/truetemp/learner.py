@@ -199,6 +199,19 @@ TAU_I_MAX_H = 24.0
 KP = 0.3
 KP_MAX_C = 1.5
 
+# A cold error is integrated this many times faster than a warm one. Still
+# bounded by MAX_STEP_PER_CYCLE_C, and tau_i is three rise times, so even doubled
+# the loop stays slower than the dead time.
+COLD_LEARN_GAIN = 2.0
+# Below target by more than this counts as cold for lifting the pre-ramp freeze.
+# Just above sensor resolution, so noise around the target never lifts it.
+COLD_LEARN_MIN_ERROR_C = 0.2
+# Solar gain (indoor degrees) above which a house at or above target is not
+# learned from. The sun adjustment already takes that warmth out of the output;
+# letting the band learn it too raises the band on sunny days and carries it
+# into every cloudy day and night at the same outdoor temperature.
+SUN_LEARN_MIN_GAIN_C = 0.3
+
 # --- Authority ------------------------------------------------------------
 # The offset clamp opens as evidence accumulates, so a fresh install ships
 # ACTIVE without shipping a controller that can do much. Day one the worst case
@@ -502,6 +515,20 @@ def initial_state() -> LearnerState:
     return LearnerState()
 
 
+def reset_bin(state: LearnerState, index: int) -> LearnerState:
+    """Forget one band's learned part and its baseline. The shared part and the other bands stay.
+
+    The baseline goes too: it seeds the band's offset the next time compensation
+    switches on, which would bring back what was just reset.
+    """
+    index = max(0, min(N_BINS - 1, index))
+    bins = tuple(OutdoorBin() if i == index else b for i, b in enumerate(state.bins))
+    baseline_bins = tuple(
+        BaselineBin() if i == index else b for i, b in enumerate(state.baseline_bins)
+    )
+    return replace(state, bins=bins, baseline_bins=baseline_bins)
+
+
 def authority_for(total_samples: int) -> float:
     """The offset clamp, widening with accumulated evidence."""
     progress = _clamp(total_samples / float(AUTHORITY_RAMP_SAMPLES), 0.0, 1.0)
@@ -580,10 +607,16 @@ def _freeze_reason(inputs: LearnerInputs, state: LearnerState) -> str | None:
         return "heating hard limit engaged, output is forced rather than learned"
     if inputs.price_braking:
         return "price compensation is deliberately holding below target"
-    if inputs.weather_preramp and _preramp_overshoot_c(inputs) <= 0.0:
+    if (
+        inputs.weather_preramp
+        and _preramp_overshoot_c(inputs) <= 0.0
+        and not _house_is_cold(inputs)
+    ):
         return "anticipating a weather change, holding the house above target"
     if inputs.sun_precool:
         return "anticipating more sun, holding the house below target"
+    if inputs.estimated_solar_gain_c > SUN_LEARN_MIN_GAIN_C and not _house_is_cold(inputs):
+        return "sun is warming the house, the sun adjustment covers that"
     if inputs.vacation_feedforward:
         return "vacation setback/catch-up is holding away from the occupied target"
     if state.holdoff_until_s is not None and inputs.now_s < state.holdoff_until_s:
@@ -607,6 +640,19 @@ def _preramp_overshoot_c(inputs: LearnerInputs) -> float:
         return 0.0
     allowance_c = max(0.0, -inputs.weather_preramp_c) / SPOOF_PER_INDOOR_C
     return inputs.indoor_temp_c - inputs.target_c - allowance_c
+
+
+def _house_is_cold(inputs: LearnerInputs) -> bool:
+    """Whether the house sits below target by more than sensor noise.
+
+    The pre-ramp holds the house ABOVE target on purpose, so a house below
+    target is not being held anywhere: the offset in force is not delivering,
+    and freezing then only keeps a too-high offset in place for as long as the
+    pre-ramp lasts.
+    """
+    if inputs.indoor_temp_c is None:
+        return False
+    return inputs.target_c - inputs.indoor_temp_c > COLD_LEARN_MIN_ERROR_C
 
 
 def baseline_coverage_of(baseline_bins: tuple[BaselineBin, ...]) -> float:
@@ -949,9 +995,16 @@ def step(state: LearnerState, inputs: LearnerInputs) -> tuple[LearnerState, Lear
 
         # Unfrozen during a pre-ramp only when the house is warmer than the
         # pre-ramp asks for, and then only that excess is learned from.
+        # A house that is cold despite the pre-ramp is learned from in full.
         learn_error_c = error_c
-        if inputs.weather_preramp:
+        if inputs.weather_preramp and not _house_is_cold(inputs):
             learn_error_c = -_preramp_overshoot_c(inputs)
+
+        # Cold is learned from faster than warm: an overshoot costs little, a
+        # cold house costs comfort, so a too-high offset should be unlearned
+        # sooner than a too-low one.
+        if learn_error_c > 0.0:
+            learn_error_c *= COLD_LEARN_GAIN
 
         raw_delta = -(learn_error_c * SPOOF_PER_INDOOR_C) * (inputs.dt_hours / tau_i_h)
         delta = _clamp(raw_delta, -MAX_STEP_PER_CYCLE_C, MAX_STEP_PER_CYCLE_C)

@@ -290,7 +290,17 @@ cannot stack into an overshoot. While the pre-ramp is acting, learning pauses
 (`learning_paused_because` says so), because the house is deliberately being
 held above target and the learner must not integrate that away. The exception
 is a house already warmer than the pre-ramp asks for: it keeps learning from
-the excess, so a warm afternoon is not held warm all evening.
+the excess, so a warm afternoon is not held warm all evening. The other is a
+house more than 0.2 °C *below* target: the pre-ramp is not holding it anywhere,
+so learning resumes from the full shortfall. Cold errors are integrated twice as
+fast as warm ones (`COLD_LEARN_GAIN`), because overshoot costs little and a cold
+house costs comfort.
+
+Learning also pauses while the sun is warming a house that is at or above
+target (estimated solar gain above 0.3 °C). The sun adjustment already takes
+that warmth out of the output; if the band learned it too, sunny days would
+push the band up and every cloudy day or night at that outdoor temperature
+would run cold. A cold house is still learned from in sun.
 
 Wind's share only counts if the wind term is switched on; the outdoor share
 needs nothing but a weather entity. If the weather integration provides no
@@ -434,6 +444,9 @@ plan":
 no card or entity: run it from Developer Tools → Actions after replacing the
 outdoor or indoor sensor. It resets the offset table and the lag buffer to a
 cold start and saves immediately; the price-spread history is kept.
+With `current_band_only: true` it resets only the band the outdoor temperature
+is in now (`prev_bin_index`), together with that band's open-loop baseline; other
+bands, the shared offset and the lag buffer stay.
 
 `vacation_plan_set` runs the same overlap check as the options flow and
 raises a translated `ServiceValidationError` (readable in the Developer
