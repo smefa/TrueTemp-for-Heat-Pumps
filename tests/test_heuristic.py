@@ -1663,6 +1663,42 @@ class TestWeatherPreRamp:
             )
             assert result.weather_preramp_c == 0.0
 
+    def test_the_ordinary_evening_cool_down_does_not_ramp(self):
+        """Tomorrow's forecast drops the same 4 degC over the same hours, so
+        today's drop is the daily cycle, not a weather change."""
+        day = [8.0, 4.0] + [6.0] * 22
+        result = compute(
+            make_inputs(outdoor_forecast=temp_forecast(*day, 8.0, 4.0, 6.0), rise_minutes=120.0),
+            lookahead_params(),
+        )
+        assert result.outdoor_preramp_c == 0.0
+        assert not result.weather_preramp_active
+
+    def test_a_front_on_top_of_the_daily_cycle_ramps_the_excess(self):
+        # Today drops 4 degC, tomorrow's same hours only 2: 2 degC is weather.
+        day = [8.0, 4.0] + [6.0] * 22
+        result = compute(
+            make_inputs(outdoor_forecast=temp_forecast(*day, 8.0, 6.0, 6.0), rise_minutes=120.0),
+            lookahead_params(),
+        )
+        assert result.outdoor_preramp_c == pytest.approx(-1.0)
+
+    def test_tomorrow_warming_over_the_same_hours_does_not_add_to_the_drop(self):
+        day = [8.0, 4.0] + [6.0] * 22
+        result = compute(
+            make_inputs(outdoor_forecast=temp_forecast(*day, 8.0, 12.0, 6.0), rise_minutes=120.0),
+            lookahead_params(),
+        )
+        assert result.outdoor_preramp_c == pytest.approx(-2.0)
+
+    def test_wind_is_not_discounted_by_tomorrow(self):
+        wind = [0.0, 10.0] + [0.0] * 22 + [0.0, 10.0, 0.0]
+        result = compute(
+            make_inputs(wind_forecast_ms=temp_forecast(*wind), rise_minutes=120.0),
+            lookahead_params(),
+        )
+        assert result.wind_preramp_c < 0.0
+
     def test_rising_wind_ramps_at_the_existing_gain(self):
         result = compute(
             make_inputs(

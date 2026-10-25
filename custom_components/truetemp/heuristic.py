@@ -171,6 +171,12 @@ WEATHER_PRERAMP_MAX_C = 3.0
 # often than a price spike, and freezing on every 0.1 degC wobble would starve
 # the learner through a whole winter.
 WEATHER_PRERAMP_EPS_C = 0.2
+# The outdoor pre-ramp is for weather CHANGES, not for the ordinary evening
+# cool-down, which arrives every day and is the curve's job. The normal drop
+# over a window is read off the same clock hours one day later in the same
+# forecast; only the part of today's drop beyond that ramps. See
+# `_term_preramp_c`.
+DAILY_CYCLE_H = 24.0
 
 # Budget for the sun pre-cool term, kept separate from WEATHER_PRERAMP_MAX_C
 # on purpose: that budget bounds a comfort-overshoot hedge (worst case if
@@ -804,10 +810,24 @@ def _lookahead_response(
     )
 
 
+def _forecast_value_at(
+    series: tuple[tuple[float, float], ...], t_h: float
+) -> float | None:
+    """Linear interpolation of a sorted `(hours_from_now, value)` series at
+    `t_h`, or None outside the series' span."""
+    for (t0, v0), (t1, v1) in zip(series, series[1:]):
+        if t0 <= t_h <= t1:
+            if t1 == t0:
+                return v0
+            return v0 + (v1 - v0) * (t_h - t0) / (t1 - t0)
+    return None
+
+
 def _term_preramp_c(
     series: tuple[tuple[float, float], ...] | None,
     to_term_c: Callable[[float], float],
     lead_minutes: float,
+    daily_cycle: bool = False,
 ) -> tuple[float, float | None]:
     """One signal's pre-ramp, in degC of outdoor spoof (<= 0), and when it peaks.
 
@@ -827,12 +847,33 @@ def _term_preramp_c(
     sacrifice on a forecast that may be wrong, with no saving attached. Sun
     is deliberately not one of the signals fed through here any more — see
     `_term_precool_c` for why it gets the opposite treatment instead.
+
+    With `daily_cycle`, the drop to each future entry is reduced by the drop
+    the forecast shows over the same clock hours one day later, so the
+    ordinary evening cool-down does not ramp (and freeze the learner) every
+    day while a front, which tomorrow does not repeat, still does. Where the
+    forecast does not reach that far, the drop counts in full.
     """
     if not series:
         return 0.0, None
     now_term_c = to_term_c(series[0][1])
+    t_now = series[0][0]
+    tomorrow_now = (
+        _forecast_value_at(series, t_now + DAILY_CYCLE_H) if daily_cycle else None
+    )
+
+    def drop_c(t_h: float, value: float) -> float:
+        drop = now_term_c - to_term_c(value)
+        if tomorrow_now is not None:
+            tomorrow_t = _forecast_value_at(series, t_h + DAILY_CYCLE_H)
+            if tomorrow_t is not None:
+                drop -= max(0.0, to_term_c(tomorrow_now) - to_term_c(tomorrow_t))
+        return max(0.0, drop)
+
     magnitude, when_h = _lookahead_weighted_peak(
-        series, lead_minutes, lambda v: max(0.0, now_term_c - to_term_c(v))
+        tuple((t_h, (t_h, v)) for t_h, v in series),
+        lead_minutes,
+        lambda entry: drop_c(*entry),
     )
     return -magnitude, when_h
 
@@ -1334,7 +1375,10 @@ def compute(inputs: HeuristicInputs, params: HeuristicParams) -> HeuristicResult
     precool_lead_minutes = max(0.0, inputs.fall_minutes)
     if params.enable_weather_lookahead:
         outdoor_preramp_c, outdoor_h = _term_preramp_c(
-            inputs.outdoor_forecast, lambda v: v, preramp_lead_minutes
+            inputs.outdoor_forecast,
+            lambda v: v,
+            preramp_lead_minutes,
+            daily_cycle=True,
         )
         wind_h: float | None = None
         # A disabled input contributes exactly 0 to the lookahead too.

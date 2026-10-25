@@ -237,8 +237,13 @@ LEARNER_STEP_TOLERANCE = 0.9
 # bound, not a control coefficient: the pre-ramp's real window is the MEASURED
 # rise time (`heuristic._term_preramp_c`), which is far shorter than this, and
 # this only stops an integration that publishes a week of hourly data from
-# handing `compute()` a pointlessly long series every cycle.
-WEATHER_LOOKAHEAD_HORIZON_HOURS = 12.0
+# handing `compute()` a pointlessly long series every cycle. It must reach a
+# day past the rise time: the outdoor pre-ramp reads the normal daily drop off
+# tomorrow's same hours (`heuristic.DAILY_CYCLE_H`).
+WEATHER_LOOKAHEAD_HORIZON_HOURS = 36.0
+# The sun pre-cool hold's "is any sun still coming" check looks only this far
+# ahead, so tomorrow's sun cannot keep today's hold alive.
+SUN_HOLD_AHEAD_HOURS = 12.0
 
 
 @dataclass(frozen=True)
@@ -1901,7 +1906,9 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
             if self._forecast_cloud_now_pct is not None
             else None
         )
-        ahead = [v for t_h, v in solar_series or () if t_h > 0.0]
+        ahead = [
+            v for t_h, v in solar_series or () if 0.0 < t_h <= SUN_HOLD_AHEAD_HOURS
+        ]
         self._sun_hold, hold_c = next_sun_hold(
             self._sun_hold,
             now=dt_util.utcnow(),
