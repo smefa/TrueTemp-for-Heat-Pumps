@@ -25,6 +25,7 @@ from __future__ import annotations
 import logging
 import math
 import time
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -85,6 +86,7 @@ from .const import (
     CONF_INDOOR_TEMP_SENSORS_EXTRA,
     CONF_NORDPOOL_PRICE_ENTITY,
     CONF_OHMONWIFI_HOST,
+    CONF_INDOOR_SENSOR_MAX_AGE_HOURS,
     CONF_OUTDOOR_SENSOR_MAX_AGE_HOURS,
     CONF_OUTDOOR_TEMP_SENSOR,
     CONF_OUTPUT_MODE,
@@ -217,7 +219,7 @@ OHMONWIFI_REQUEST_TIMEOUT_SECONDS = 10.0
 # How long the outdoor sensor must stay unavailable before the OhmOnWifi relay
 # is switched to bypass. Cloud-backed sensors drop out for a cycle or two; a
 # short gap shouldn't flip the relay off and on again.
-OHMONWIFI_FAILSAFE_GRACE = timedelta(minutes=15)
+OHMONWIFI_FAILSAFE_GRACE = timedelta(minutes=60)
 
 # Fallback range for the heat-curve-offset dial when the target entity's own
 # `min`/`max` attributes cannot be read (entity briefly unavailable, or an
@@ -462,6 +464,9 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
         # When the outdoor sensor first went bad in the current outage; the
         # relay failsafe waits out OHMONWIFI_FAILSAFE_GRACE from here.
         self._ohmonwifi_sensor_bad_since: datetime | None = None
+        # Recent relay-failsafe events for the diagnostics dump. In memory
+        # only, so it starts empty after a restart.
+        self.ohmonwifi_events: deque[dict[str, str]] = deque(maxlen=50)
 
         # --- Live control surface (restored by the entities) -----------------
         # All in-memory rather than config options: an options change reloads
@@ -925,6 +930,14 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
         extra_ids = _entry_value(self.entry, CONF_INDOOR_TEMP_SENSORS_EXTRA, [])
         mode = _entry_value(self.entry, CONF_INDOOR_AGGREGATION, DEFAULT_INDOOR_AGGREGATION)
 
+        max_age_hours = float(
+            _entry_value(
+                self.entry,
+                CONF_INDOOR_SENSOR_MAX_AGE_HOURS,
+                0,  # entries from before this option existed keep the old behaviour
+            )
+            or 0
+        )
         readings_by_id: dict[str, float] = {}
         contributing: set[str] = set()
         missing: set[str] = set()
@@ -941,6 +954,21 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
                 )
                 unavailable.add(entity_id)
                 continue
+            if max_age_hours > 0:
+                # `last_reported`, as for the outdoor sensor: a steady but
+                # alive sensor passes, one that stopped reporting does not.
+                last_seen = getattr(state, "last_reported", None) or state.last_updated
+                age = dt_util.utcnow() - last_seen
+                if age > timedelta(hours=max_age_hours):
+                    _LOGGER.warning(
+                        "Indoor temperature sensor %s has not reported for %.1f h "
+                        "(limit %g h); treating it as unavailable",
+                        entity_id,
+                        age.total_seconds() / 3600,
+                        max_age_hours,
+                    )
+                    unavailable.add(entity_id)
+                    continue
             value = _as_float(state)
             if value is None:
                 _LOGGER.warning("Indoor temperature sensor %s has no numeric state", entity_id)
@@ -2281,9 +2309,15 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
             return
         now = dt_util.utcnow()
         if sensor_ok:
+            if self._ohmonwifi_sensor_bad_since is not None:
+                minutes = (now - self._ohmonwifi_sensor_bad_since).total_seconds() / 60
+                self._record_ohmonwifi_event(
+                    "outdoor_sensor_recovered", f"after {minutes:.0f} min"
+                )
             self._ohmonwifi_sensor_bad_since = None
         elif self._ohmonwifi_sensor_bad_since is None:
             self._ohmonwifi_sensor_bad_since = now
+            self._record_ohmonwifi_event("outdoor_sensor_lost", "grace period started")
         try:
             if not sensor_ok:
                 if now - self._ohmonwifi_sensor_bad_since < OHMONWIFI_FAILSAFE_GRACE:
@@ -2291,6 +2325,9 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
                 if await self._async_ohmonwifi_relay_state(host) == "ON":
                     await self._async_ohmonwifi_toggle(host)
                     self._ohmonwifi_forced_bypass = True
+                    self._record_ohmonwifi_event(
+                        "relay_bypass", "grace period over; relay switched OFF"
+                    )
                     _LOGGER.warning(
                         "Outdoor sensor unavailable; switched OhmOnWifi device "
                         "%s to bypass so the heat pump reads its real external "
@@ -2300,6 +2337,9 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
             elif self._ohmonwifi_forced_bypass:
                 if await self._async_ohmonwifi_relay_state(host) == "OFF":
                     await self._async_ohmonwifi_toggle(host)
+                    self._record_ohmonwifi_event(
+                        "relay_override", "sensor recovered; relay switched ON"
+                    )
                     _LOGGER.info(
                         "Outdoor sensor recovered; switched OhmOnWifi device %s "
                         "back to override",
@@ -2307,11 +2347,19 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
                     )
                 self._ohmonwifi_forced_bypass = False
         except Exception as err:  # noqa: BLE001 - best-effort, never break output
+            # Exception type only: the message can carry the device's address,
+            # and diagnostics are shared publicly.
+            self._record_ohmonwifi_event("relay_error", type(err).__name__)
             _LOGGER.warning(
                 "Could not update OhmOnWifi device %s relay state (ignored): %s",
                 host,
                 err,
             )
+
+    def _record_ohmonwifi_event(self, event: str, detail: str) -> None:
+        self.ohmonwifi_events.append(
+            {"ts": dt_util.utcnow().isoformat(), "event": event, "detail": detail}
+        )
 
     async def _async_ohmonwifi_relay_state(self, host: str) -> str | None:
         """GET `/info`'s `relay` field: "ON" (override active) or "OFF"

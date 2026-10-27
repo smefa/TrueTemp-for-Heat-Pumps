@@ -215,6 +215,8 @@ async def async_get_config_entry_diagnostics(
         },
         # Trend window from the local data log, oldest first. See module
         # docstring; empty if data logging has never been enabled.
+        # Relay failsafe events since the last restart, oldest first.
+        "ohmonwifi_events": list(coordinator.ohmonwifi_events),
         "recent_history": {
             "days": DIAGNOSTICS_HISTORY_DAYS,
             "records": recent_history,

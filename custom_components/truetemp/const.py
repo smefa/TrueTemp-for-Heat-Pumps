@@ -40,6 +40,10 @@ CONF_OUTDOOR_TEMP_SENSOR = "outdoor_temp_sensor"
 # sensor that legitimately holds one value for hours but keeps reporting is
 # still healthy; only one that has stopped reporting altogether trips it.
 CONF_OUTDOOR_SENSOR_MAX_AGE_HOURS = "outdoor_sensor_max_age_hours"
+# Same idea for the indoor sensors, judged per sensor: one that has not reported
+# for this many hours counts as unavailable (held offset, repair issue). 0
+# disables the check.
+CONF_INDOOR_SENSOR_MAX_AGE_HOURS = "indoor_sensor_max_age_hours"
 CONF_WEATHER_ENTITY = "weather_entity"
 CONF_NORDPOOL_PRICE_ENTITY = "nordpool_price_entity"
 
@@ -172,6 +176,7 @@ KNOWN_CONFIG_KEYS = frozenset(
         CONF_INDOOR_AGGREGATION,
         CONF_OUTDOOR_TEMP_SENSOR,
         CONF_OUTDOOR_SENSOR_MAX_AGE_HOURS,
+        CONF_INDOOR_SENSOR_MAX_AGE_HOURS,
         CONF_WEATHER_ENTITY,
         CONF_NORDPOOL_PRICE_ENTITY,
         CONF_OUTPUT_MODE,
@@ -216,6 +221,10 @@ DEFAULT_ENABLE_DATA_LOGGING = False
 # Off, same reason as the toggles above: an upgrade must not start failing a
 # sensor that used to be accepted.
 DEFAULT_OUTDOOR_SENSOR_MAX_AGE_HOURS = 0
+# Applied to new installs and shown in the options form; entries that predate
+# the option stay at 0 (off). Generous because sensors that report only on
+# change can stay quiet for hours.
+DEFAULT_INDOOR_SENSOR_MAX_AGE_HOURS = 4
 DEFAULT_OUTPUT_MODE = OUTPUT_MODE_OUTDOOR_SPOOF
 DEFAULT_HEAT_CURVE_OFFSET_INVERT = False
 

@@ -58,6 +58,7 @@ from .const import (
     CONF_INDOOR_TEMP_SENSORS_EXTRA,
     CONF_NORDPOOL_PRICE_ENTITY,
     CONF_OHMONWIFI_HOST,
+    CONF_INDOOR_SENSOR_MAX_AGE_HOURS,
     CONF_OUTDOOR_SENSOR_MAX_AGE_HOURS,
     CONF_OUTDOOR_TEMP_SENSOR,
     CONF_OUTPUT_MODE,
@@ -70,6 +71,7 @@ from .const import (
     DEFAULT_ENABLE_PRICE_COMPENSATION,
     DEFAULT_ENABLE_SOLAR_INPUT,
     DEFAULT_ENABLE_WIND_INPUT,
+    DEFAULT_INDOOR_SENSOR_MAX_AGE_HOURS,
     DEFAULT_OUTDOOR_SENSOR_MAX_AGE_HOURS,
     DEFAULT_ENABLE_WEATHER_LOOKAHEAD,
     DEFAULT_HEAT_CURVE_OFFSET_INVERT,
@@ -277,6 +279,9 @@ class TrueTempConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             else:
                 await self.async_set_unique_id(user_input[CONF_INDOOR_TEMP_SENSOR])
                 self._abort_if_unique_id_configured()
+                user_input.setdefault(
+                    CONF_INDOOR_SENSOR_MAX_AGE_HOURS, DEFAULT_INDOOR_SENSOR_MAX_AGE_HOURS
+                )
                 return self.async_create_entry(title=user_input[CONF_NAME], data=user_input)
         return self.async_show_form(
             step_id="user", data_schema=_user_data_schema(defaults), errors=errors
@@ -302,8 +307,15 @@ class TrueTempConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 if user_input[CONF_INDOOR_TEMP_SENSOR] != entry.unique_id:
                     await self.async_set_unique_id(user_input[CONF_INDOOR_TEMP_SENSOR])
                     self._abort_if_unique_id_configured()
+                # Not on the reconfigure form, so carry it over rather than
+                # letting the data replacement drop it.
+                kept = {
+                    k: entry.data[k]
+                    for k in (CONF_INDOOR_SENSOR_MAX_AGE_HOURS,)
+                    if k in entry.data
+                }
                 return self.async_update_reload_and_abort(
-                    entry, title=user_input[CONF_NAME], data=user_input
+                    entry, title=user_input[CONF_NAME], data={**kept, **user_input}
                 )
         return self.async_show_form(
             step_id="reconfigure",
@@ -435,6 +447,21 @@ class TrueTempOptionsFlow(config_entries.OptionsFlow):
                             options=[MODE_AVERAGE, MODE_LOWEST, MODE_HIGHEST],
                             translation_key="indoor_aggregation",
                             mode=selector.SelectSelectorMode.DROPDOWN,
+                        )
+                    ),
+                    vol.Required(
+                        CONF_INDOOR_SENSOR_MAX_AGE_HOURS,
+                        default=current.get(
+                            CONF_INDOOR_SENSOR_MAX_AGE_HOURS,
+                            DEFAULT_INDOOR_SENSOR_MAX_AGE_HOURS,
+                        ),
+                    ): selector.NumberSelector(
+                        selector.NumberSelectorConfig(
+                            min=0,
+                            max=72,
+                            step=1,
+                            unit_of_measurement="h",
+                            mode="box",
                         )
                     ),
                     vol.Required(
