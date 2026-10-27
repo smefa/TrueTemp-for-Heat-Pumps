@@ -214,6 +214,11 @@ OUTPUT_REASSERT_AFTER_CYCLES = 4
 # cycle on a device that has gone unreachable.
 OHMONWIFI_REQUEST_TIMEOUT_SECONDS = 10.0
 
+# How long the outdoor sensor must stay unavailable before the OhmOnWifi relay
+# is switched to bypass. Cloud-backed sensors drop out for a cycle or two; a
+# short gap shouldn't flip the relay off and on again.
+OHMONWIFI_FAILSAFE_GRACE = timedelta(minutes=15)
+
 # Fallback range for the heat-curve-offset dial when the target entity's own
 # `min`/`max` attributes cannot be read (entity briefly unavailable, or an
 # `input_number` with no configured bounds). Matches the worked example this
@@ -237,8 +242,13 @@ LEARNER_STEP_TOLERANCE = 0.9
 # bound, not a control coefficient: the pre-ramp's real window is the MEASURED
 # rise time (`heuristic._term_preramp_c`), which is far shorter than this, and
 # this only stops an integration that publishes a week of hourly data from
-# handing `compute()` a pointlessly long series every cycle.
-WEATHER_LOOKAHEAD_HORIZON_HOURS = 12.0
+# handing `compute()` a pointlessly long series every cycle. It must reach a
+# day past the rise time: the outdoor pre-ramp reads the normal daily drop off
+# tomorrow's same hours (`heuristic.DAILY_CYCLE_H`).
+WEATHER_LOOKAHEAD_HORIZON_HOURS = 36.0
+# The sun pre-cool hold's "is any sun still coming" check looks only this far
+# ahead, so tomorrow's sun cannot keep today's hold alive.
+SUN_HOLD_AHEAD_HOURS = 12.0
 
 
 @dataclass(frozen=True)
@@ -449,6 +459,9 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
         # re-engages a bypass WE caused, never one set from the device's own
         # web UI.
         self._ohmonwifi_forced_bypass: bool = False
+        # When the outdoor sensor first went bad in the current outage; the
+        # relay failsafe waits out OHMONWIFI_FAILSAFE_GRACE from here.
+        self._ohmonwifi_sensor_bad_since: datetime | None = None
 
         # --- Live control surface (restored by the entities) -----------------
         # All in-memory rather than config options: an options change reloads
@@ -1901,7 +1914,9 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
             if self._forecast_cloud_now_pct is not None
             else None
         )
-        ahead = [v for t_h, v in solar_series or () if t_h > 0.0]
+        ahead = [
+            v for t_h, v in solar_series or () if 0.0 < t_h <= SUN_HOLD_AHEAD_HOURS
+        ]
         self._sun_hold, hold_c = next_sun_hold(
             self._sun_hold,
             now=dt_util.utcnow(),
@@ -2254,6 +2269,9 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
         heat-curve-offset mode never engages the device's relay in the first
         place, see `CONF_OHMONWIFI_HOST` in const.py.
 
+        The bypass only happens once the sensor has been bad for
+        OHMONWIFI_FAILSAFE_GRACE, so brief dropouts don't toggle the relay.
+
         Guarded by `_ohmonwifi_forced_bypass` so recovery only re-engages a
         bypass this integration itself caused, never one set by hand from the
         device's own web UI.
@@ -2261,8 +2279,15 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
         host = self.ohmonwifi_host
         if not host or self.output_mode != OUTPUT_MODE_OUTDOOR_SPOOF:
             return
+        now = dt_util.utcnow()
+        if sensor_ok:
+            self._ohmonwifi_sensor_bad_since = None
+        elif self._ohmonwifi_sensor_bad_since is None:
+            self._ohmonwifi_sensor_bad_since = now
         try:
             if not sensor_ok:
+                if now - self._ohmonwifi_sensor_bad_since < OHMONWIFI_FAILSAFE_GRACE:
+                    return
                 if await self._async_ohmonwifi_relay_state(host) == "ON":
                     await self._async_ohmonwifi_toggle(host)
                     self._ohmonwifi_forced_bypass = True
