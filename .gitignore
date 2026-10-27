@@ -10,6 +10,8 @@ venv/
 .idea/
 *.log
 CLAUDE.md
+AGENTS.md
+.agents/
 .claude/
 docs/plan*
 docs/audit*
