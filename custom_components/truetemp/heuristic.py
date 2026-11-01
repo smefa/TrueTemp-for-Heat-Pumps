@@ -1017,6 +1017,7 @@ class HeuristicParams:
     # manual-disarm return ramp). Gates `vacation_catchup_c` so the kick
     # cannot run on an occupied house and double the learner's proportional.
     enable_vacation_catchup: bool = False
+    manual_target_adjustment_c: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -1112,6 +1113,7 @@ class HeuristicResult:
     # `vacation_feedforward_active`, so a deep recovery cannot rewrite the
     # occupied-house bins either.
     vacation_catchup_active: bool = False
+    manual_target_adjustment_c: float = 0.0
     model_version: str = MODEL_VERSION
     # See `HeuristicParams.user_indoor_target_c`.
     user_indoor_target_c: float = 0.0
@@ -1188,7 +1190,16 @@ def compute(inputs: HeuristicInputs, params: HeuristicParams) -> HeuristicResult
     # the response math below, and stays strictly gated: that's the value
     # that would actually move the published temperature.
     current_price = inputs.current_price if inputs.price_data_available else None
-    price_for_braking = current_price if params.enable_price_compensation else None
+    manual_target_adjustment_c = (
+        params.manual_target_adjustment_c
+        if inputs.indoor_data_available and inputs.indoor_temp_c is not None
+        else 0.0
+    )
+    price_for_braking = (
+        current_price
+        if params.enable_price_compensation and manual_target_adjustment_c == 0.0
+        else None
+    )
 
     tier = resolve_price_tier(params.price_comfort_tier)
     caution = resolve_cold_caution(params.cold_caution)
@@ -1430,6 +1441,7 @@ def compute(inputs: HeuristicInputs, params: HeuristicParams) -> HeuristicResult
         + price_adjustment_c
         + vacation_feedforward_c
         + vacation_catchup_c
+        + manual_target_adjustment_c
         + wind_adjustment_c
         + sun_adjustment_c
         + weather_preramp_c
@@ -1482,6 +1494,8 @@ def compute(inputs: HeuristicInputs, params: HeuristicParams) -> HeuristicResult
         )
     if vacation_catchup_active:
         reason += f"; vacation catch-up {vacation_catchup_c:+.1f}°C until rooms catch target"
+    if manual_target_adjustment_c != 0.0:
+        reason += f"; manual target recovery {manual_target_adjustment_c:+.1f} C"
     if price_for_braking is not None:
         reason += f"; price {price_for_braking:.2f} ['{params.price_comfort_tier}' tier"
         if no_forecast:
@@ -1540,6 +1554,7 @@ def compute(inputs: HeuristicInputs, params: HeuristicParams) -> HeuristicResult
         vacation_feedforward_active=vacation_feedforward_active,
         vacation_catchup_c=vacation_catchup_c,
         vacation_catchup_active=vacation_catchup_active,
+        manual_target_adjustment_c=manual_target_adjustment_c,
         wind_speed_ms=inputs.wind_speed_ms,
         wind_data_available=inputs.wind_data_available,
         cloud_coverage_pct=inputs.cloud_coverage_pct,

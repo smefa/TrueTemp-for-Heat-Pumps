@@ -178,6 +178,7 @@ from .outdoor_guard import (
     confirm_due_s as outdoor_guard_confirm_due_s,
     source_lost as outdoor_guard_source_lost,
 )
+from .target_recovery import TargetRecovery, resolve as resolve_target_recovery
 from .vacation import (
     ACTIVE_PHASES as VACATION_ACTIVE_PHASES,
     VacationPlan,
@@ -423,9 +424,10 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
         # failure but never cleared on a later successful update - so reading
         # it directly for a "last error" display would show a stale message
         # forever after the sensor recovers. Track our own timestamp instead,
-        # scoped to the exact call that can raise UpdateFailed, and clear it as
-        # soon as that call succeeds again.
+        # scoped to the complete update, and clear it only after a successful
+        # cycle. Keep bounded evidence separately after recovery.
         self.last_error_at: datetime | None = None
+        self.update_events: deque[dict] = deque(maxlen=100)
 
         # When this coordinator was constructed, i.e. this config entry's setup
         # (HA start, integration reload, or an options change). Used to hold off
@@ -522,6 +524,9 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
         # `indoor_target_c` whenever no vacation plan is sagging the house,
         # so this is a no-op when the feature is unused.
         self._effective_target_c: float = self.indoor_target_c
+        self._target_recovery = TargetRecovery(self.indoor_target_c)
+        self._manual_target_adjustment_c = 0.0
+        self._manual_recovery_since_learning = False
 
         # The exact price forecast this cycle's decision used, stashed for the
         # data logger — forecasts get revised, so realised prices are not a
@@ -737,6 +742,7 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
             enable_weather_lookahead=self.lookahead_enabled,
             spoof_per_indoor_c=SPOOF_PER_INDOOR_C,
             enable_vacation_catchup=vacation_phase in VACATION_ACTIVE_PHASES,
+            manual_target_adjustment_c=self._manual_target_adjustment_c,
         )
 
     # --- Source health as Repairs ---------------------------------------------
@@ -1437,6 +1443,10 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
                             or previous.vacation_catchup_active
                         )
                     ),
+                    manual_target_recovery=bool(
+                        self._manual_recovery_since_learning
+                        or (previous and previous.manual_target_adjustment_c)
+                    ),
                     rise_hours=self.lag_result.rise_hours,
                     estimated_solar_gain_c=estimated_solar_gain_c,
                     indoor_sensor_set_changed=indoor_sensor_set_changed,
@@ -1447,6 +1457,7 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
                 self.learner_result.reason,
                 self.lag_result.reason,
             )
+            self._manual_recovery_since_learning = False
             self._schedule_state_save()
             return True
         except Exception as err:  # noqa: BLE001 - never break output over learning
@@ -1627,6 +1638,32 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
     # --- The cycle -----------------------------------------------------------
 
     async def _async_update_data(self) -> HeuristicResult:
+        """Keep failure evidence even after the next successful refresh."""
+        try:
+            result = await self._async_update_cycle()
+        except Exception as err:
+            if self.last_error_at is None:
+                self.last_error_at = dt_util.utcnow()
+            await self._async_record_update_event(
+                "error", error_type=type(err).__name__, error=str(err)
+            )
+            raise
+        if self.last_error_at is not None:
+            await self._async_record_update_event("recovered")
+        self.last_error_at = None
+        return result
+
+    async def _async_record_update_event(self, event: str, **details: str) -> None:
+        record = {
+            "ts": dt_util.utcnow().isoformat(),
+            "event": event,
+            **details,
+        }
+        self.update_events.append(record)
+        if self.data_logging_enabled:
+            await async_log_record(self.hass, f"{self.entry.entry_id}_errors", record)
+
+    async def _async_update_cycle(self) -> HeuristicResult:
         try:
             try:
                 reading_c = self._read_raw_outdoor_temp_c()
@@ -1635,7 +1672,6 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
                 raise
             raw_outdoor_temp_c = self._guard_outdoor_reading(reading_c)
         except UpdateFailed:
-            self.last_error_at = dt_util.utcnow()
             self._sync_source_issue(
                 "outdoor_sensor_unavailable",
                 ok=False,
@@ -1644,7 +1680,6 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
             )
             await self._async_ohmonwifi_relay_failsafe(sensor_ok=False)
             raise
-        self.last_error_at = None
         self._sync_source_issue(
             "outdoor_sensor_unavailable", ok=True, severity=ir.IssueSeverity.ERROR, entity_id=None
         )
@@ -1848,6 +1883,25 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
                     self.vacation_result = overlay
 
         self._effective_target_c = self.vacation_result.target_c
+
+        self._target_recovery, manual_adjustment_c = resolve_target_recovery(
+            self._target_recovery,
+            now_s=time.monotonic(),
+            target_c=self.indoor_target_c,
+            indoor_temp_c=indoor_temp_c,
+            indoor_available=indoor_ok,
+            enabled=(
+                self.is_active
+                and self.vacation_result.phase not in VACATION_ACTIVE_PHASES
+                and not resolve_heating_hard_limit_engaged(
+                    raw_outdoor_temp_c,
+                    bool(self.data and self.data.heating_hard_limit_engaged),
+                )
+            ),
+            rise_hours=self._lag_result().rise_hours,
+        )
+        self._manual_target_adjustment_c = manual_adjustment_c * SPOOF_PER_INDOOR_C
+        self._manual_recovery_since_learning |= self._manual_target_adjustment_c != 0.0
 
         # Learning advances on its own clock; republishing happens every time.
         self._learner_stepped = self._due_for_learner_step() and self._advance_learning(
@@ -2489,6 +2543,7 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
             "vacation_feedforward_active": result.vacation_feedforward_active,
             "vacation_catchup_c": result.vacation_catchup_c,
             "vacation_catchup_active": result.vacation_catchup_active,
+            "manual_target_adjustment_c": result.manual_target_adjustment_c,
             "price_response": result.price_response,
             "cold_brake_factor": result.cold_brake_factor,
             "price_significance_factor": result.price_significance_factor,

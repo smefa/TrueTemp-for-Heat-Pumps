@@ -29,6 +29,7 @@ heuristic = load("heuristic")
 holiday = load("holiday")
 lag = load("lag")
 learner = load("learner")
+target_recovery = load("target_recovery")
 
 STEP_MINUTES = 15.0
 STEP_HOURS = STEP_MINUTES / 60.0
@@ -98,6 +99,7 @@ def run(
     now: float = 0.0,
     return_state: bool = False,
     on_output=None,
+    manual_recovery: bool = False,
 ):
     """Drive the full loop and return (trace, final learner result, final output).
 
@@ -142,6 +144,9 @@ def run(
     result = None
     output = None
     lag_result = None
+    recovery_state = target_recovery.TargetRecovery(
+        target_c if target_at is None else target_at(0)
+    )
 
     for i in range(steps):
         current_target = target_c if target_at is None else target_at(i)
@@ -152,6 +157,18 @@ def run(
 
         lag_state = lag.push(lag_state, offset, indoor, current_target)
         lag_result = lag.estimate(lag_state, "radiators")
+
+        manual_adjustment_c = 0.0
+        if manual_recovery:
+            recovery_state, manual_adjustment_c = target_recovery.resolve(
+                recovery_state,
+                now_s=now,
+                target_c=current_target,
+                indoor_temp_c=indoor,
+                indoor_available=True,
+                enabled=is_active,
+                rise_hours=lag_result.rise_hours,
+            )
 
         price, forecast = (None, None) if price_at is None else price_at(i)
 
@@ -171,6 +188,10 @@ def run(
                     previous_output and previous_output.weather_preramp_active
                 ),
                 rise_hours=lag_result.rise_hours,
+                manual_target_recovery=bool(
+                    manual_adjustment_c
+                    or (previous_output and previous_output.manual_target_adjustment_c)
+                ),
             ),
         )
 
@@ -183,6 +204,7 @@ def run(
             enable_solar_input=False,
             enable_wind_input=False,
             spoof_per_indoor_c=learner.SPOOF_PER_INDOOR_C,
+            manual_target_adjustment_c=manual_adjustment_c * learner.SPOOF_PER_INDOOR_C,
         )
         params.update(params_overrides or {})
 
@@ -228,6 +250,43 @@ def run(
     if return_state:
         return trace, result, output, learner_state, lag_state, now
     return trace, result, output
+
+
+class TestManualTargetRecovery:
+    @pytest.mark.parametrize("target", [20.5, 21.5])
+    @pytest.mark.parametrize("delay_steps, inertia", [(4, 0.15), (8, 0.06)])
+    def test_half_degree_change_responds_immediately_and_settles(
+        self, target, delay_steps, inertia
+    ):
+        outputs = []
+        trace, result, _ = run(
+            House(delay_steps=delay_steps, inertia=inertia),
+            2200,
+            target_at=lambda step: 21.0 if step < 1200 else target,
+            manual_recovery=True,
+            on_output=outputs.append,
+        )
+        first = outputs[1200]
+        expected_direction = 1.0 if target < 21.0 else -1.0
+        assert first.manual_target_adjustment_c * expected_direction > 0.8
+        assert trace[-1][0] == pytest.approx(target, abs=0.15)
+        assert result.hold_offset_c == pytest.approx(19.0 - target, abs=0.3)
+        assert outputs[-1].manual_target_adjustment_c == 0.0
+        assert all(abs(output.manual_target_adjustment_c) <= 2.0 for output in outputs)
+        assert max(abs(indoor - target) for indoor, _, _ in trace[1300:]) < 0.6
+
+    @pytest.mark.parametrize("target", [20.5, 21.5])
+    def test_assistance_moves_rooms_before_learning_alone(self, target):
+        traces = [
+            run(
+                House(),
+                1240,
+                target_at=lambda step: 21.0 if step < 1200 else target,
+                manual_recovery=assisted,
+            )[0]
+            for assisted in (False, True)
+        ]
+        assert abs(traces[1][1206][0] - 21.0) > abs(traces[0][1206][0] - 21.0) + 0.1
 
 
 class TestConvergence:

@@ -54,6 +54,26 @@ compensated outdoor = real outdoor
                     + price              optional
 ```
 
+### Manual target changes
+
+Changing the occupied indoor target by at least 0.1 C starts temporary assistance:
+more heating for a raised target, less heating for a lowered target. Like vacation
+recovery, assistance follows the remaining indoor temperature gap and tapers as
+the rooms approach the target. It stops within 0.1 C (20% of smaller steps, with
+a 0.05 C minimum stopping margin),
+when the target is crossed, or at a safety deadline of twice the estimated rise
+time, bounded to 2-6 hours. Assistance is capped at 2 C indoor-equivalent before
+conversion to outdoor spoof; the usual output and heating safety limits still apply.
+
+The learner pauses during assistance and then resumes finding the new holding
+level. Price braking and precharging pause while manual assistance is applied;
+price information remains visible. Vacation setback/return/recovery takes precedence.
+Turning compensation off
+or reaching the outdoor heating cutoff cancels assistance; an unavailable indoor
+sensor suppresses it without extending the deadline. Another target change replaces
+the pending recovery. Recovery is not restored after a restart. Local data logs
+include `manual_target_adjustment_c` in outdoor-spoof degrees.
+
 ### It learns something in both states
 
 Integral action only works while its output is actually applied — you cannot
@@ -717,6 +737,15 @@ Off by default. When on, appends one JSON line per cycle to
 `/config/truetemp_data/<entry_id>.jsonl`: raw physical inputs, the
 learner's internal state, and the price forecast the decision actually used.
 Purely local.
+
+Failed updates (`Fel`) and subsequent recoveries are also written to
+`/config/truetemp_data/<entry_id>_errors.jsonl` when logging is enabled.
+Each failure includes its timestamp, exception type and message, including
+the outdoor sensor entity when that source fails. Diagnostics include this
+history under `recent_update_events`, plus the latest 100 events since reload
+under `update_events` even when logging is off. Recovery clears the current
+status error but keeps this history. Error files use the same rotation and
+retention rules as the regular data log.
 
 **Filter on `learner_stepped` when replaying.** A record is written on every
 cycle, including the extra refreshes a recovering source triggers, but the

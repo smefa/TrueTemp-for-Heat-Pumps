@@ -424,6 +424,7 @@ class LearnerInputs:
     # and leave them wrong after return. Defaults False so every existing call
     # site is unaffected.
     vacation_feedforward: bool = False
+    manual_target_recovery: bool = False
     # True when the set of contributing indoor sensors differs from last
     # cycle (a sensor joined or dropped out of the aggregate). The aggregate
     # value took a step that is not a real temperature change, so the
@@ -619,6 +620,8 @@ def _freeze_reason(inputs: LearnerInputs, state: LearnerState) -> str | None:
         return "sun is warming the house, the sun adjustment covers that"
     if inputs.vacation_feedforward:
         return "vacation setback/catch-up is holding away from the occupied target"
+    if inputs.manual_target_recovery:
+        return "manual target recovery is temporarily adjusting heating"
     if state.holdoff_until_s is not None and inputs.now_s < state.holdoff_until_s:
         remaining = (state.holdoff_until_s - inputs.now_s) / 60.0
         return f"waiting {remaining:.0f} min for the last change to reach the room"

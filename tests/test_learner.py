@@ -54,6 +54,31 @@ def mature_state(**overrides) -> LearnerState:
     return replace(learner.initial_state(), **defaults)
 
 
+class TestManualTargetRecovery:
+    def test_temporary_assistance_does_not_rewrite_holding_offsets(self):
+        state = mature_state()
+        updated, result = learner.step(
+            state,
+            make_inputs(indoor_temp_c=20.0, manual_target_recovery=True),
+        )
+        assert updated.bins == state.bins
+        assert updated.shared_offset_c == state.shared_offset_c
+        assert updated.total_samples == state.total_samples
+        assert "manual target recovery" in result.reason
+
+    def test_learning_resumes_after_assistance(self):
+        state, _ = learner.step(
+            mature_state(),
+            make_inputs(indoor_temp_c=20.0, manual_target_recovery=True),
+        )
+        updated, _ = learner.step(
+            state,
+            make_inputs(now_s=1900.0, indoor_temp_c=20.0),
+        )
+        assert updated.total_samples > state.total_samples
+        assert updated.shared_offset_c < state.shared_offset_c
+
+
 class TestBinning:
     def test_index_covers_the_whole_real_line(self):
         assert learner.bin_index_for(-100.0) == 0
