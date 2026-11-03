@@ -423,6 +423,21 @@
     }
   },
   "services": {
+    "pause_heating": {
+      "name": "Pausa värmen",
+      "description": "Minska värmen tillfälligt och återgå automatiskt med begränsad återhämtning. Stoppar inte varmvatten och garanterar inte ett fullständigt värmestopp. Kräver aktiv kompensering och färska mätvärden.",
+      "fields": {
+        "config_entry_id": { "name": "Zon", "description": "Vilken TrueTemp-zon som ska pausas." },
+        "duration": { "name": "Varaktighet", "description": "Standard är 2 timmar. Högst 24 timmar i sträck; en ny begäran ersätter återstående tid." }
+      }
+    },
+    "resume_heating": {
+      "name": "Återuppta värmen",
+      "description": "Avsluta en värmepaus i förtid. Tillfällig återhämtning och pausad inlärning skyddar de inlärda offsetvärdena.",
+      "fields": {
+        "config_entry_id": { "name": "Zon", "description": "Vilken TrueTemp-zon som ska återupptas." }
+      }
+    },
     "reset_learning": {
       "name": "Nollställ inlärd data",
       "description": "Radera det zonen har lärt sig (offsettabellen och uppskattningen av svarstid) och börja om. Använd efter byte av ute- eller innegivare. Inställningar och scheman behålls. Går inte att ångra.",

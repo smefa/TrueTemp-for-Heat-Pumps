@@ -43,6 +43,11 @@ skruva på.
   märker någon skillnad i huset. Som standard sänker den också värmen om det inte behövs och du sparar även på det.
 - ☀️💨 **Tar hänsyn till sol och vind** (valfritt) — för hus där solen
   faktiskt värmer rummet, eller där drag är ett riktigt problem.
+- 🔥 **Kan pausa värmen när braskaminen eller solen värmer huset**
+  (valfritt, beta) — se [Braskamin och överskottsvärme](#braskamin-och-överskottsvärme)
+  för vilka utgångar som stöds och vilken inställning pumpen behöver.
+- 🌡️ **Hjälper huset nå ett nytt börvärde** — anpassar värmen tillfälligt när
+  du ändrar önskad innetemperatur och återgår sedan till vanlig reglering.
 - 🧳 **[Semesterläge](#semesterläge)** (valfritt) — lägg in en eller flera
   namngivna resor, en gång eller återkommande, och låt TrueTemp räkna ut
   exakt när den ska börja värma igen, så att huset är varmt precis till att
@@ -143,6 +148,10 @@ Allt nedan är valfritt och kan hoppas över helt:
 
 - **Extra innegivare** — kombinera upp till fyra till med den ovan, antingen
   som medelvärde eller inställt på att styra efter det kallaste rummet.
+- **Kontroll av innegivare** — undviker att lita på en givare som slutat
+  rapportera. Du kan välja hur länge TrueTemp väntar innan den räknas som otillgänglig.
+- **Braskamin / överskottsvärme** — låter värmen ta en paus när kaminen
+  värmer huset. Av som standard; se säkerhetsinformationen nedan.
 - **Kompensering för sol och vind** — för hus där det här faktiskt
   påverkar rummet du mäter i.
 - **Agera på väderprognosen** — börjar värma lite hårdare innan en kallfront
@@ -157,7 +166,27 @@ Allt nedan är valfritt och kan hoppas över helt:
   har en sådan (se ovan), eller till en egen `climate`-entitet med
   rumsgivare, för pumpar och TRV:er som har en sådan (se ovan).
 - **Lokal loggning** — en detaljerad loggfil på din egen dator, för den som
-  vill gräva i siffrorna. Inget skickas någonstans.
+  vill gräva i siffrorna, samt en separat historik över uppdateringsfel.
+  Inget skickas någonstans.
+
+---
+
+## Braskamin och överskottsvärme
+
+Eldar du i braskaminen? Slå på **Braskamin / överskottsvärme** så kan
+TrueTemp pausa värmen när huset redan är varmt och låta den återupptas när
+huset svalnar. Brytaren är av som standard. Solen kan ge samma effekt när
+**Sol** är aktiverat.
+
+**Innan du testar:** det fungerar bara när TrueTemp styr via pumpens
+utetemperatur, inte via kurvförskjutning eller önskad rumstemperatur.
+Pumpen måste vara inställd på att stoppa rumsvärmen under **25 °C**.
+Varmvattnet påverkas inte.
+
+Det här är en betafunktion som fortfarande behöver provas i ett riktigt hus.
+Detaljer finns i den
+[tekniska dokumentationen](docs/TECHNICAL.md#fireplace-and-solar-excess-heat)
+(på engelska).
 
 ---
 
@@ -222,6 +251,10 @@ startläget, utan omstart. Dina inställningar och scheman behålls. Det går
 inte att ångra, och det finns medvetet ingen knapp för det, så att det inte
 går att trycka på av misstag. Visar den nya givaren inom ungefär en halv
 grad samma värde som den gamla kan du hoppa över det här.
+
+Du kan också nollställa bara det TrueTemp lärt sig för den aktuella
+utetemperaturen, i stället för att börja om helt. Det som lärts in för andra
+utetemperaturer behålls.
 
 ---
 

@@ -68,6 +68,13 @@ from .excess_heat import (
     advance as advance_excess_heat,
     source_lost as excess_heat_source_lost,
 )
+from .heating_pause import (
+    HeatingPause,
+    DEFAULT_DURATION_S,
+    advance as advance_heating_pause,
+    request as request_heating_pause,
+    release as release_heating_pause,
+)
 from .const import (
     CONF_ENABLE_EXCESS_HEAT,
     CONF_EXCESS_HEAT_MARGIN_C,
@@ -537,6 +544,12 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
         self._manual_target_adjustment_c = 0.0
         self._manual_recovery_since_learning = False
         self.excess_heat_state = ExcessHeatState()
+        self.heating_pause = HeatingPause()
+        self._pause_adjustment_c = 0.0
+        self._pause_since_learning = False
+        self._pause_lag_reference: LagResult | None = None
+        self._pause_timer_unsub: Callable[[], None] | None = None
+        entry.async_on_unload(self._cancel_pause_timer)
 
         # The exact price forecast this cycle's decision used, stashed for the
         # data logger — forecasts get revised, so realised prices are not a
@@ -752,7 +765,9 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
             enable_weather_lookahead=self.lookahead_enabled,
             spoof_per_indoor_c=SPOOF_PER_INDOOR_C,
             enable_vacation_catchup=vacation_phase in VACATION_ACTIVE_PHASES,
-            manual_target_adjustment_c=self._manual_target_adjustment_c,
+            manual_target_adjustment_c=(
+                self._manual_target_adjustment_c or self._pause_adjustment_c
+            ),
         )
 
     # --- Source health as Repairs ---------------------------------------------
@@ -871,6 +886,7 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
         if (
             self.is_active
             and not self.excess_heat_state.learning_frozen(time.monotonic())
+            and not self.heating_pause.learning_frozen(time.monotonic())
             and learner is not None
             and indoor_ok
             and indoor_temp_c is not None
@@ -1419,9 +1435,11 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
             # A composition change makes the aggregate take a step that is not
             # a real temperature change — drop the lag buffer exactly like an
             # unavailable reading does, via the same `indoor_c=None` path.
+            pause_frozen = self.heating_pause.learning_frozen(now) or self._pause_since_learning
             lag_indoor_c = (
                 None if indoor_sensor_set_changed
-                or self.excess_heat_state.learning_frozen(now) else indoor_temp_c
+                or self.excess_heat_state.learning_frozen(now)
+                or pause_frozen else indoor_temp_c
             )
             self.lag_state = lag_push(
                 self.lag_state,
@@ -1429,7 +1447,12 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
                 lag_indoor_c,
                 self._effective_target_c,
             )
-            self.lag_result = lag_estimate(self.lag_state, self.heating_type)
+            if not pause_frozen or self.lag_result is None:
+                self.lag_result = self._retain_pause_lag(
+                    lag_estimate(self.lag_state, self.heating_type),
+                )
+            if pause_frozen:
+                self._pause_lag_reference = self.lag_result
 
             previous = self.data
             self.learner_state, self.learner_result = learner_step(
@@ -1463,6 +1486,9 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
                     ),
                     rise_hours=self.lag_result.rise_hours,
                     excess_heat=self.excess_heat_state.learning_frozen(now),
+                    heating_pause=(
+                        self.heating_pause.learning_frozen(now) or self._pause_since_learning
+                    ),
                     estimated_solar_gain_c=estimated_solar_gain_c,
                     indoor_sensor_set_changed=indoor_sensor_set_changed,
                 ),
@@ -1473,6 +1499,7 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
                 self.lag_result.reason,
             )
             self._manual_recovery_since_learning = False
+            self._pause_since_learning = False
             self._schedule_state_save()
             return True
         except Exception as err:  # noqa: BLE001 - never break output over learning
@@ -1619,6 +1646,7 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
         self.lag_state = fresh_lag
         self.learner_result = None
         self.lag_result = None
+        self._pause_lag_reference = None
         self._learner_last_step_s = None
         await self.async_request_refresh()
 
@@ -1696,6 +1724,17 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
             self.excess_heat_state = excess_heat_source_lost(
                 self.excess_heat_state, time.monotonic(), self._lag_result().rise_hours,
             )
+            self.heating_pause = release_heating_pause(
+                self.heating_pause, time.monotonic(), self._lag_result().rise_hours,
+                "outdoor sensor unavailable",
+            )
+            self._cancel_pause_timer()
+            self._pause_adjustment_c = 0.0
+            if self.data is not None and self.data.heating_paused:
+                await self._async_push_output(replace(
+                    self.data, heating_paused=False, heating_hard_limit_engaged=False,
+                    compensated_outdoor_temp_c=self.data.raw_outdoor_temp_c,
+                ))
             await self._async_ohmonwifi_relay_failsafe(sensor_ok=False)
             raise
         self._sync_source_issue(
@@ -1920,6 +1959,9 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
         )
         self._manual_target_adjustment_c = manual_adjustment_c * SPOOF_PER_INDOOR_C
         self._manual_recovery_since_learning |= self._manual_target_adjustment_c != 0.0
+        self._advance_heating_pause(
+            indoor_temp_c, indoor_ok, indoor_contributing, raw_outdoor_temp_c,
+        )
 
         lag = self._lag_result()
         learner = self.learner_result
@@ -2000,6 +2042,8 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
             excess_heat_source=self.excess_heat_state.source,
         ), self._params())
 
+        result = self._apply_heating_pause(result)
+
         # A real side effect when configured, but it never affects `result`.
         await self._async_push_output(result)
 
@@ -2007,6 +2051,152 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
             await self._log_data_point(result)
 
         return result
+
+    def _retain_pause_lag(self, candidate: LagResult) -> LagResult:
+        reference = self._pause_lag_reference
+        if reference is None:
+            return candidate
+        retained = {}
+        for direction in ("rise", "fall"):
+            if getattr(reference, f"{direction}_measured") and not getattr(
+                candidate, f"{direction}_measured",
+            ):
+                for suffix in ("minutes", "measured", "events"):
+                    field = f"{direction}_{suffix}"
+                    retained[field] = getattr(reference, field)
+        if not retained:
+            self._pause_lag_reference = None
+            return candidate
+        candidate = replace(candidate, **retained)
+        self._pause_lag_reference = candidate
+        return replace(candidate, reason=(
+            f"Rebuilding clean events after heating pause; retaining measured response: "
+            f"rise {candidate.rise_minutes:.0f} min, fall {candidate.fall_minutes:.0f} min"
+        ))
+
+    def _apply_heating_pause(self, result: HeuristicResult) -> HeuristicResult:
+        result = replace(
+            result, heating_paused=self.heating_pause.active,
+            pause_recovery_adjustment_c=self._pause_adjustment_c,
+            manual_target_adjustment_c=self._manual_target_adjustment_c,
+        )
+        if self.heating_pause.active:
+            stop_requested = self.output_mode == OUTPUT_MODE_OUTDOOR_SPOOF
+            result = replace(
+                result, compensated_outdoor_temp_c=OUTPUT_SANITY_MAX_C,
+                price_braking=False, precharge_active=False,
+                reason=("Heating stop requested by external pause" if stop_requested else
+                        "Heating reduced by external pause; a full stop is not guaranteed"),
+            )
+        elif self._pause_adjustment_c:
+            explanation = result.reason.replace("manual target recovery", "post-pause recovery")
+            result = replace(result, reason="Recovering after heating pause; " + explanation)
+
+        return result
+
+    def _pause_indoor_ready(self, contributing: frozenset[str]) -> bool:
+        if not contributing or len(contributing) != self.indoor_sensor_total_configured:
+            return False
+        if not all(math.isfinite(value) for value in self.indoor_sensor_readings.values()):
+            return False
+        max_age = float(_entry_value(self.entry, CONF_INDOOR_SENSOR_MAX_AGE_HOURS, 0) or 4)
+        for entity_id in contributing:
+            sensor = self.hass.states.get(entity_id)
+            last_seen = (
+                getattr(sensor, "last_reported", None) or sensor.last_updated
+            ) if sensor is not None else None
+            if last_seen is None or dt_util.utcnow() - last_seen > timedelta(hours=max_age):
+                return False
+        return True
+
+    def _pause_outdoor_ready(self) -> bool:
+        entity_id = _entry_value(self.entry, CONF_OUTDOOR_TEMP_SENSOR, None)
+        sensor = self.hass.states.get(entity_id) if entity_id else None
+        last_seen = (
+            getattr(sensor, "last_reported", None) or sensor.last_updated
+        ) if sensor is not None else None
+        max_age = float(_entry_value(self.entry, CONF_OUTDOOR_SENSOR_MAX_AGE_HOURS, 0) or 4)
+        return last_seen is not None and dt_util.utcnow() - last_seen <= timedelta(hours=max_age)
+
+    def _cancel_pause_timer(self) -> None:
+        if self._pause_timer_unsub is not None:
+            self._pause_timer_unsub()
+            self._pause_timer_unsub = None
+
+    async def _async_pause_due(self, _now: datetime) -> None:
+        self._pause_timer_unsub = None
+        await self.async_resume_heating()
+
+    async def async_pause_heating(self, duration_s: float = DEFAULT_DURATION_S) -> None:
+        if not self.is_active:
+            raise ServiceValidationError("Enable TrueTemp compensation before pausing heating")
+        if (
+            not self.last_update_success or not self._pause_outdoor_ready()
+            or not self._pause_indoor_ready(frozenset(self.indoor_sensor_readings))
+        ):
+            raise ServiceValidationError("Fresh indoor and outdoor readings are required")
+        coldest = min(self.indoor_sensor_readings.values())
+        if not math.isfinite(coldest) or coldest <= self.comfort_min_c:
+            raise ServiceValidationError("The coldest room is at or below the comfort minimum")
+        now = time.monotonic()
+        try:
+            requested = request_heating_pause(self.heating_pause, now, duration_s)
+        except ValueError as err:
+            raise ServiceValidationError(str(err)) from err
+        self._cancel_pause_timer()
+        self.heating_pause = requested
+        self._pause_since_learning = True
+        self._pause_adjustment_c = 0.0
+
+        async def expire_if_current(_now: datetime) -> None:
+            if self.heating_pause is requested:
+                await self._async_pause_due(_now)
+
+        self._pause_timer_unsub = async_call_later(
+            self.hass, max(0.0, requested.deadline_s - now), expire_if_current,
+        )
+        await self.async_request_refresh()
+
+    async def async_resume_heating(self) -> None:
+        self._cancel_pause_timer()
+        self.heating_pause = release_heating_pause(
+            self.heating_pause, time.monotonic(), self._lag_result().rise_hours,
+            "released by action or timer",
+        )
+        await self.async_request_refresh()
+
+    def _advance_heating_pause(
+        self, indoor_c: float | None, indoor_ok: bool,
+        contributing: frozenset[str], outdoor_c: float,
+    ) -> None:
+        now = time.monotonic()
+        outdoor_ready = (
+            not self.heating_pause.learning_frozen(now) or self._pause_outdoor_ready()
+        )
+        if self.heating_pause.active and not outdoor_ready:
+            self.heating_pause = release_heating_pause(
+                self.heating_pause, now, self._lag_result().rise_hours,
+                "outdoor sensor stale or unavailable",
+            )
+        recovery_allowed = not (
+            self.vacation_result.phase in VACATION_ACTIVE_PHASES
+            or self._manual_target_adjustment_c
+            or self.excess_heat_state.source
+            or resolve_heating_hard_limit_engaged(
+                outdoor_c, bool(self.data and self.data.heating_hard_limit_engaged),
+            )
+        )
+        self.heating_pause, self._pause_adjustment_c = advance_heating_pause(
+            self.heating_pause, now_s=now, enabled=self.is_active,
+            available=indoor_ok and outdoor_ready and self._pause_indoor_ready(contributing),
+            indoor_c=indoor_c, coldest_c=min(self.indoor_sensor_readings.values(), default=None),
+            target_c=self._effective_target_c, minimum_c=self.comfort_min_c,
+            rise_hours=self._lag_result().rise_hours, recovery_allowed=recovery_allowed,
+        )
+        self._pause_adjustment_c *= SPOOF_PER_INDOOR_C
+        self._pause_since_learning |= self.heating_pause.learning_frozen(now)
+        if not self.heating_pause.active:
+            self._cancel_pause_timer()
 
     def _advance_excess_heat(
         self, preview: HeuristicResult, contributing: frozenset[str],
@@ -2032,6 +2222,7 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
             self._excess_solar_reference = (now, solar_gain)
         excluded = bool(
             not self.is_active or not supported
+            or self.heating_pause.learning_frozen(now)
             or preview.heating_hard_limit_engaged
             or preview.precharge_active or preview.price_catchup_c < 0
             or preview.weather_preramp_active
@@ -2278,6 +2469,8 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
             ha_unit if is_climate else None,
         )
         lo, hi = self._entity_bounds(*bounds_args)
+        if self.is_active and result.heating_paused:
+            value = hi if self.heat_curve_offset_invert else lo
         value = round(max(lo, min(hi, value)))
         # Rounding can step past a fractional bound (max 1.5 -> 2), which the
         # service would reject; pull back to the nearest whole value inside.
@@ -2367,7 +2560,7 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
         # _async_push_heat_curve_offset does.
         value = self._clamp_to_entity_range(
             entity_id,
-            value,
+            float("-inf") if self.is_active and result.heating_paused else value,
             "min_temp",
             "max_temp",
             INDOOR_CLIMATE_FALLBACK_MIN_C,
@@ -2644,6 +2837,10 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
             "sun_precool_active": result.sun_precool_active,
             "heating_hard_limit_engaged": result.heating_hard_limit_engaged,
             "excess_heat_source": result.excess_heat_source,
+            "heating_paused": result.heating_paused,
+            "pause_recovery_adjustment_c": result.pause_recovery_adjustment_c,
+            "heating_pause_learning_frozen": self.heating_pause.learning_frozen(time.monotonic()),
+            "heating_pause_release_reason": self.heating_pause.release_reason,
             "excess_heat_drift_c_per_h": self.excess_heat_state.drift_c_per_h,
             "excess_heat_learning_frozen": self.excess_heat_state.learning_frozen(time.monotonic()),
             "lead_minutes_effective": result.lead_minutes_effective,

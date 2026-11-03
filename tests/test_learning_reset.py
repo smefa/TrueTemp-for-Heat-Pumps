@@ -48,6 +48,7 @@ def coordinator():
         lag_state=lag.LagState(offsets_c=(-5.0,), indoors_c=(20.0,), targets_c=(21.0,)),
         learner_result=object(),
         lag_result=object(),
+        _pause_lag_reference=object(),
         _learner_last_step_s=1000.0,
         price_spread_history=heuristic.PriceSpreadHistory(
             daily_spreads_c=(0.5,), daily_medians_c=(0.3,)
@@ -67,6 +68,7 @@ def test_full_reset_zeroes_every_band_and_persists_it(coordinator):
     assert coordinator.lag_state == lag.initial_state(15.0)
     assert coordinator.learner_result is None
     assert coordinator.lag_result is None
+    assert coordinator._pause_lag_reference is None
     assert coordinator._learner_last_step_s is None
     coordinator._store.async_save.assert_awaited_once()
     coordinator.async_request_refresh.assert_awaited_once()

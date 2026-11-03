@@ -26,6 +26,7 @@ learner = load("learner")
 lag = load("lag")
 recovery = load("target_recovery")
 excess = load("excess_heat")
+pause = load("heating_pause")
 const = load("const")
 load("holiday")
 vacation = load("vacation")
@@ -80,8 +81,13 @@ def coordinator():
         timedelta=timedelta,
         dt_util=SimpleNamespace(utcnow=lambda: datetime.now(timezone.utc)),
         advance_excess_heat=excess.advance,
+        advance_heating_pause=pause.advance,
+        release_heating_pause=pause.release,
+        math=__import__("math"),
         _entry_value=lambda entry, key, default: entry.get(key, default),
         CONF_INDOOR_SENSOR_MAX_AGE_HOURS=const.CONF_INDOOR_SENSOR_MAX_AGE_HOURS,
+        CONF_OUTDOOR_TEMP_SENSOR=const.CONF_OUTDOOR_TEMP_SENSOR,
+        CONF_OUTDOOR_SENSOR_MAX_AGE_HOURS=const.CONF_OUTDOOR_SENSOR_MAX_AGE_HOURS,
         CONF_EXCESS_HEAT_MARGIN_C=const.CONF_EXCESS_HEAT_MARGIN_C,
         DEFAULT_EXCESS_HEAT_MARGIN_C=const.DEFAULT_EXCESS_HEAT_MARGIN_C,
         OUTPUT_MODE_OUTDOOR_SPOOF=const.OUTPUT_MODE_OUTDOOR_SPOOF,
@@ -103,13 +109,22 @@ def coordinator():
     )
     module = ast.Module(
         body=[ast.ImportFrom(module="__future__", names=[ast.alias(name="annotations")],
-                             level=0), advance, excess_method, refresh],
+                             level=0), advance, excess_method, refresh] + [
+            node for node in control.body if getattr(node, "name", None) in (
+                "_advance_heating_pause", "_pause_indoor_ready", "_pause_outdoor_ready",
+                "_cancel_pause_timer", "_retain_pause_lag",
+            )
+        ],
         type_ignores=[],
     )
     exec(compile(ast.fix_missing_locations(module), str(path), "exec"), namespace)
     instance = SimpleNamespace(
         excess_heat_state=excess.ExcessHeatState(), excess_heat_enabled=False,
-        entry={}, output_mode=const.OUTPUT_MODE_OUTDOOR_SPOOF,
+        heating_pause=pause.HeatingPause(), _pause_adjustment_c=0.0,
+        _pause_since_learning=False, _pause_lag_reference=None,
+        _pause_timer_unsub=None, comfort_min_c=18.0,
+        entry={const.CONF_OUTDOOR_TEMP_SENSOR: "sensor.outdoor"},
+        output_mode=const.OUTPUT_MODE_OUTDOOR_SPOOF,
         indoor_sensor_readings={}, indoor_sensor_total_configured=0,
         hass=SimpleNamespace(states=SimpleNamespace(get=lambda _: None)),
         _last_solar_forecast=None,
@@ -128,11 +143,15 @@ def coordinator():
         solar_input_enabled=False,
         heating_type="radiators",
         lag_state=lag.initial_state(15.0),
+        lag_result=lag.estimate(lag.initial_state(15.0), "radiators"),
         learner_state=learner.initial_state(),
-        _lag_result=lambda: lag.estimate(lag.initial_state(15.0), "radiators"),
+        _lag_result=lambda: instance.lag_result,
         _schedule_state_save=lambda: None,
     )
     instance._advance_excess_heat = MethodType(namespace["_advance_excess_heat"], instance)
+    for method in ("_advance_heating_pause", "_pause_indoor_ready", "_pause_outdoor_ready",
+                   "_cancel_pause_timer", "_retain_pause_lag"):
+        setattr(instance, method, MethodType(namespace[method], instance))
     instance._advance_learning = MethodType(namespace["_advance_learning"], instance)
     instance._due_for_learner_step = (
         lambda: clock[0] - instance._learner_last_step_s >= 900.0
@@ -321,3 +340,132 @@ def test_restored_target_is_consumed_before_manual_changes(coordinator):
     instance.indoor_target_c = 22.0
     instance.refresh()
     assert instance._manual_target_adjustment_c < 0.0
+
+
+@pytest.mark.parametrize("mode", [const.OUTPUT_MODE_OUTDOOR_SPOOF,
+                                  const.OUTPUT_MODE_HEAT_CURVE_OFFSET,
+                                  const.OUTPUT_MODE_INDOOR_CLIMATE])
+def test_external_pause_freezes_learning_in_every_output_mode(coordinator, mode):
+    instance, clock, seen = coordinator
+    prepare_room(instance)
+    instance.output_mode = mode
+    instance.indoor_sensor_readings = {"room": 20.0}
+    instance.heating_pause = pause.request(pause.HeatingPause(), clock[0], 7200)
+    before = instance.learner_state
+    instance.refresh(indoor_temp_c=20.0, indoor_contributing=frozenset({"room"}))
+    assert instance.heating_pause.active
+    assert seen[-1].heating_pause
+    assert instance.learner_state.bins == before.bins
+    assert instance.learner_state.total_samples == before.total_samples
+    assert not instance.lag_state.indoors_c
+
+
+def test_external_pause_releases_on_partial_sensor_loss(coordinator):
+    instance, clock, _ = coordinator
+    prepare_room(instance, count=2)
+    instance.indoor_sensor_readings = {"room": 20.0}
+    instance.heating_pause = pause.request(pause.HeatingPause(), clock[0], 7200)
+    instance.refresh(indoor_temp_c=20.0, indoor_contributing=frozenset({"room"}))
+    assert not instance.heating_pause.active
+    assert instance._pause_adjustment_c == 0.0
+
+
+def test_external_recovery_and_settling_preserve_offsets(coordinator):
+    instance, clock, seen = coordinator
+    prepare_room(instance)
+    instance.indoor_sensor_readings = {"room": 20.0}
+    instance.heating_pause = pause.request(pause.HeatingPause(), clock[0], 900)
+    instance.refresh(indoor_temp_c=20.0, indoor_contributing=frozenset({"room"}))
+    before = instance.learner_state
+    clock[0] += 900
+    instance.refresh(indoor_temp_c=20.0, indoor_contributing=frozenset({"room"}))
+    assert not instance.heating_pause.active
+    assert instance._pause_adjustment_c == -2.0
+    assert seen[-1].heating_pause
+    instance.indoor_sensor_readings = {"room": 21.0}
+    clock[0] += 900
+    instance.refresh(indoor_contributing=frozenset({"room"}))
+    assert instance._pause_adjustment_c == 0.0
+    assert seen[-1].heating_pause
+    assert instance.learner_state.bins == before.bins
+    assert instance.learner_state.total_samples == before.total_samples
+
+
+def test_pause_between_learning_ticks_still_freezes_next_tick(coordinator):
+    instance, clock, seen = coordinator
+    instance._learner_last_step_s = clock[0]
+    prepare_room(instance)
+    instance.indoor_sensor_readings = {"room": 21.0}
+    instance.heating_pause = pause.request(pause.HeatingPause(), clock[0], 1)
+    instance.refresh(indoor_contributing=frozenset({"room"}))
+    instance.heating_pause = pause.HeatingPause()
+    clock[0] += 900
+    instance.refresh(indoor_contributing=frozenset({"room"}))
+    assert seen[-1].heating_pause
+    assert not instance._pause_since_learning
+
+
+def test_external_pause_preserves_measured_response_estimate(coordinator):
+    instance, clock, _ = coordinator
+    prepare_room(instance)
+    instance.indoor_sensor_readings = {"room": 20.0}
+    measured = replace(instance.lag_result, rise_minutes=240.0, rise_measured=True)
+    instance.lag_result = measured
+    instance.heating_pause = pause.request(pause.HeatingPause(), clock[0], 900)
+    instance.refresh(indoor_temp_c=20.0, indoor_contributing=frozenset({"room"}))
+    assert instance.lag_result is measured
+    clock[0] += 900
+    instance.refresh(indoor_temp_c=20.0, indoor_contributing=frozenset({"room"}))
+    assert instance.lag_result is measured
+    assert instance.heating_pause.recovery_until_s == clock[0] + 6 * 3600
+    instance.heating_pause = pause.HeatingPause()
+    instance._pause_since_learning = False
+    clock[0] += 900
+    instance.refresh(indoor_temp_c=20.0, indoor_contributing=frozenset({"room"}))
+    assert instance.lag_result.rise_minutes == 240.0
+    assert instance.lag_result.rise_measured
+    assert "Rebuilding clean events" in instance.lag_result.reason
+
+
+def test_new_clean_estimates_replace_pre_pause_measurements_per_direction(coordinator):
+    instance, _, _ = coordinator
+    instance._pause_lag_reference = replace(
+        instance.lag_result, rise_minutes=240, rise_measured=True,
+        fall_minutes=300, fall_measured=True,
+    )
+    candidate = replace(instance.lag_result, rise_minutes=180, rise_measured=True)
+    rebuilt = instance._retain_pause_lag(candidate)
+    assert rebuilt.rise_minutes == 180
+    assert rebuilt.fall_minutes == 300
+    fallback = lag.estimate(lag.initial_state(15.0), "radiators")
+    assert instance._retain_pause_lag(fallback).rise_minutes == 180
+    candidate = replace(candidate, fall_minutes=240, fall_measured=True)
+    assert instance._retain_pause_lag(candidate) == candidate
+    assert instance._pause_lag_reference is None
+
+
+def test_stale_outdoor_sensor_releases_external_pause(coordinator):
+    instance, clock, _ = coordinator
+    prepare_room(instance)
+    instance.indoor_sensor_readings = {"room": 20.0}
+    instance.hass.states.get = lambda entity_id: SimpleNamespace(
+        last_updated=datetime.now(timezone.utc) - timedelta(
+            hours=5 if entity_id == "sensor.outdoor" else 0),
+    )
+    instance.heating_pause = pause.request(pause.HeatingPause(), clock[0], 7200)
+    instance.refresh(indoor_temp_c=20.0, indoor_contributing=frozenset({"room"}))
+    assert not instance.heating_pause.active
+    assert instance.heating_pause.release_reason == "outdoor sensor stale or unavailable"
+    assert instance._pause_adjustment_c == 0
+
+
+def test_pause_recovery_converts_indoor_assistance_to_spoof_units(coordinator):
+    instance, clock, _ = coordinator
+    prepare_room(instance)
+    instance.indoor_sensor_readings = {"room": 20.5}
+    instance.heating_pause = pause.release(
+        pause.HeatingPause(deadline_s=clock[0] + 7200), clock[0], 1, "action",
+    )
+    instance._advance_heating_pause.__func__.__globals__["SPOOF_PER_INDOOR_C"] = 2.0
+    instance.refresh(indoor_temp_c=20.5, indoor_contributing=frozenset({"room"}))
+    assert instance._pause_adjustment_c == -2.0

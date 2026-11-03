@@ -42,6 +42,7 @@ from homeassistant.helpers import config_validation as cv
 import homeassistant.util.dt as dt_util
 
 from .const import CONF_VACATION_PLANS, DATA_LIVE_OPTIONS_SKIP_RELOAD, DOMAIN
+from .heating_pause import DEFAULT_DURATION_S
 from .vacation import (
     RECURRENCE_ONCE,
     RECURRENCE_WEEKLY,
@@ -57,8 +58,17 @@ SERVICE_VACATION_PLAN_REMOVE = "vacation_plan_remove"
 SERVICE_VACATION_PLAN_REORDER = "vacation_plan_reorder"
 
 SERVICE_RESET_LEARNING = "reset_learning"
+SERVICE_PAUSE_HEATING = "pause_heating"
+SERVICE_RESUME_HEATING = "resume_heating"
 
 _SERVICES_REGISTERED = f"{DOMAIN}_services_registered"
+
+_PAUSE_HEATING_SCHEMA = vol.Schema({
+    vol.Required("config_entry_id"): cv.string,
+    vol.Optional("duration", default=DEFAULT_DURATION_S): cv.positive_time_period,
+})
+
+_RESUME_HEATING_SCHEMA = vol.Schema({vol.Required("config_entry_id"): cv.string})
 
 _RESET_LEARNING_SCHEMA = vol.Schema(
     {
@@ -259,10 +269,37 @@ async def _async_handle_reset_learning(call: ServiceCall) -> None:
         await entry.runtime_data.async_reset_learning()
 
 
+async def _async_handle_pause_heating(call: ServiceCall) -> None:
+    entry = _resolve_entry(call.hass, call.data["config_entry_id"])
+    if entry.state is not ConfigEntryState.LOADED:
+        raise ServiceValidationError(
+            translation_domain=DOMAIN, translation_key="service_entry_not_loaded",
+        )
+    await entry.runtime_data.async_pause_heating(call.data["duration"].total_seconds())
+
+
+async def _async_handle_resume_heating(call: ServiceCall) -> None:
+    entry = _resolve_entry(call.hass, call.data["config_entry_id"])
+    if entry.state is not ConfigEntryState.LOADED:
+        raise ServiceValidationError(
+            translation_domain=DOMAIN, translation_key="service_entry_not_loaded",
+        )
+    await entry.runtime_data.async_resume_heating()
+
+
 def async_register_services(hass: HomeAssistant) -> None:
     if hass.data.get(_SERVICES_REGISTERED):
         return
     hass.data[_SERVICES_REGISTERED] = True
+
+    hass.services.async_register(
+        DOMAIN, SERVICE_PAUSE_HEATING, _async_handle_pause_heating,
+        schema=_PAUSE_HEATING_SCHEMA,
+    )
+    hass.services.async_register(
+        DOMAIN, SERVICE_RESUME_HEATING, _async_handle_resume_heating,
+        schema=_RESUME_HEATING_SCHEMA,
+    )
 
     hass.services.async_register(
         DOMAIN,
