@@ -26,6 +26,17 @@ async def async_setup_entry(
     )
     if retired_entity_id is not None:
         registry.async_remove(retired_entity_id)
+    # Keep the master control available to the Vacation card without a
+    # duplicate row in Home Assistant's automatically generated panels.
+    vacation_entity_id = registry.async_get_entity_id(
+        "switch", "truetemp", f"{entry.entry_id}_vacation_mode",
+    )
+    if vacation_entity_id is not None:
+        vacation_entry = registry.async_get(vacation_entity_id)
+        if vacation_entry is not None and vacation_entry.hidden_by is None:
+            registry.async_update_entity(
+                vacation_entity_id, hidden_by=er.RegistryEntryHider.INTEGRATION,
+            )
     async_add_entities(
         [
             ActiveSwitch(entry.runtime_data, entry),
@@ -115,6 +126,7 @@ class VacationModeSwitch(TrueTempEntity, SwitchEntity, RestoreEntity):
 
     _attr_translation_key = "vacation_mode"
     _attr_entity_category = EntityCategory.CONFIG
+    _attr_entity_registry_visible_default = False
 
     def __init__(
         self,
