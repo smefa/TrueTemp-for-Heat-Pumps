@@ -354,13 +354,14 @@ Heat-curve-offset and indoor-climate outputs do not support this pause: their
 available adjustments cannot guarantee a stop. The status attribute
 `excess_heat_supported` reports whether the selected output supports it.
 
-The new **Fireplace / excess heat** switch is off by default. The existing
+The **Fireplace / excess heat** setting under **Settings > Sun, wind, heat and price**
+is off by default. The existing
 **Solar** setting also enables solar pauses, with no separate solar-pause switch.
 Both use the same measured triggers, using the **coldest** configured indoor
 sensor regardless of the normal aggregation setting:
 
 - Slow: at least 1.5 °C above target continuously for 45 minutes. The margin is
-  adjustable under Sources (1–4 °C).
+  adjustable under Sun, wind, heat and price (1–4 °C).
 - Fast: rising at least 1 °C/hour and at least 1 °C above target continuously
   for 15 minutes. A fast rise freezes learning immediately, even below target.
 
@@ -383,7 +384,7 @@ A fireplace pause releases at target +0.5 °C. A solar pause releases at target
 modelled gain disappears (at most 0.05 °C), the solar forecast becomes unavailable,
 or Solar is disabled. Solar also releases unconditionally at target +0.5 °C so
 a sunny forecast cannot keep heating paused after the rooms cool.
-Disabling the fireplace switch releases its pause.
+Disabling the fireplace setting releases its pause.
 Missing or stale indoor data also releases immediately. The pause output is
 applied without a ramp and is separate from the summer cutoff's hysteresis.
 

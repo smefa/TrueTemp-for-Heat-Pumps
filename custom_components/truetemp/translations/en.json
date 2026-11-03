@@ -65,7 +65,7 @@
         "description": "Everything here is optional. TrueTemp works with nothing on this page filled in.",
         "menu_options": {
           "settings": "Settings",
-          "sources": "Sun, wind and price sensors",
+          "sources": "Sun, wind, heat and price",
           "price": "Saving money on electricity",
           "output": "Outgoing sensors",
           "vacation": "Vacation plans"
@@ -96,8 +96,8 @@
         }
       },
       "sources": {
-        "title": "Sun, wind and price sensors",
-        "description": "Optional extras. Sun and wind let TrueTemp react before the house has started to drift; a price sensor lets it save money when electricity is expensive.",
+        "title": "Sun, wind, heat and price",
+        "description": "Optional extras. Sun and wind let TrueTemp react before the house has started to drift; a price sensor lets it save money when electricity is expensive. Fireplace / excess heat can pause heating when other heat sources warm the house.",
         "data": {
           "weather_entity": "Weather forecast",
           "nordpool_price_entity": "Electricity price",
@@ -297,9 +297,6 @@
       },
       "vacation_mode": {
         "name": "Vacation mode"
-      },
-      "excess_heat": {
-        "name": "Fireplace / excess heat"
       }
     },
     "select": {

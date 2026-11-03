@@ -166,9 +166,9 @@ Everything below is optional and can be skipped:
 
 ## Fireplace and excess heat
 
-Using a wood stove? Turn on **Fireplace / excess heat** and TrueTemp can
+Using a wood stove? Enable **Fireplace / excess heat** under **Settings > Sun, wind, heat and price** and TrueTemp can
 pause heating when the house is already warm, then let it resume as the house
-cools. The switch is off by default. Sunshine can do the same when **Solar**
+cools. The setting is off by default. Sunshine can do the same when **Solar**
 is enabled.
 
 **Before testing:** this only works when TrueTemp controls the pump through

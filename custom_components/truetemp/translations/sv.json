@@ -65,7 +65,7 @@
         "description": "Allt här är valfritt. TrueTemp fungerar utan att något på denna sida är ifyllt.",
         "menu_options": {
           "settings": "Inställningar",
-          "sources": "Sol-, vind- och prisgivare",
+          "sources": "Sol, vind, värme och elpris",
           "price": "Spara pengar på el",
           "output": "Utgående givare",
           "vacation": "Semesterplaner"
@@ -96,8 +96,8 @@
         }
       },
       "sources": {
-        "title": "Sol-, vind- och prisgivare",
-        "description": "Valfria tillägg. Sol och vind låter TrueTemp reagera innan huset har börjat driva; en prisgivare låter den spara pengar när elen är dyr.",
+        "title": "Sol, vind, värme och elpris",
+        "description": "Valfria tillägg. Sol och vind låter TrueTemp reagera innan huset har börjat driva; en prisgivare låter den spara pengar när elen är dyr. Braskamin / överskottsvärme kan pausa värmen när andra värmekällor värmer huset.",
         "data": {
           "weather_entity": "Väderprognos",
           "nordpool_price_entity": "Elpris",
@@ -297,9 +297,6 @@
       },
       "vacation_mode": {
         "name": "Semesterläge"
-      },
-      "excess_heat": {
-        "name": "Braskamin / överskottsvärme"
       }
     },
     "select": {
