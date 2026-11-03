@@ -31,6 +31,7 @@ lag = load("lag")
 learner = load("learner")
 target_recovery = load("target_recovery")
 excess_heat = load("excess_heat")
+heating_pause = load("heating_pause")
 
 STEP_MINUTES = 15.0
 STEP_HOURS = STEP_MINUTES / 60.0
@@ -308,6 +309,61 @@ def test_fireplace_pause_preserves_learning_through_release_and_recovery():
         if pause.source:
             assert output.compensated_outdoor_temp_c == 25.0
     assert paused and released
+
+
+@pytest.mark.parametrize("delay_steps, inertia", [(4, 0.15), (8, 0.06)])
+def test_external_pause_recovers_without_relearning_the_deliberate_cooling(delay_steps, inertia):
+    """A delayed house cools during the request and recovers without moving its bins."""
+    house = House(delay_steps=delay_steps, inertia=inertia)
+    _, _, _, state, response_state, now = run(house, 1200, return_state=True)
+    saved_bins = state.bins
+    saved_shared = state.shared_offset_c
+    saved_samples = state.total_samples
+    pause_state = heating_pause.request(heating_pause.HeatingPause(), now, 7200)
+    offset = learner.hold_offset_at(saved_bins, saved_shared, 0.0)
+    paused = recovered = settled = False
+    temperatures = []
+    response = lag.estimate(response_state, "radiators")
+    for _ in range(100):
+        now += STEP_HOURS * 3600
+        indoor = house.advance(min(offset, 1.0))
+        temperatures.append(indoor)
+        pause_state, assistance = heating_pause.advance(
+            pause_state, now_s=now, enabled=True, available=True,
+            indoor_c=indoor, coldest_c=indoor, target_c=21.0, minimum_c=18.0,
+            rise_hours=response.rise_hours, recovery_allowed=True,
+        )
+        paused |= pause_state.active
+        recovered |= assistance < 0
+        frozen = pause_state.learning_frozen(now)
+        assert state.bins == saved_bins
+        assert state.shared_offset_c == saved_shared
+        assert state.total_samples == saved_samples
+        if not frozen:
+            settled = True
+            break
+        response_state = lag.push(response_state, offset, None, 21.0)
+        state, learned = learner.step(state, learner.LearnerInputs(
+            now_s=now, dt_hours=STEP_HOURS, indoor_temp_c=indoor,
+            indoor_data_available=True, target_c=21.0, outdoor_temp_c=0.0,
+            heating_hard_limit_engaged=False, is_active=True, price_braking=False,
+            rise_hours=response.rise_hours, heating_pause=frozen,
+        ))
+        output = heuristic.compute(heuristic.HeuristicInputs(
+            indoor_temp_c=indoor, indoor_data_available=True, raw_outdoor_temp_c=0.0,
+            wind_speed_ms=0.0, wind_data_available=False, sun_elevation_deg=-10.0,
+            sun_azimuth_deg=180.0, cloud_coverage_pct=100.0, cloud_data_available=False,
+            current_price=None, price_data_available=False,
+            learned_offset_c=learned.offset_c,
+        ), heuristic.HeuristicParams(
+            21.0, 18.0, False, enable_solar_input=False,
+            manual_target_adjustment_c=assistance,
+        ))
+        offset = 25.0 if pause_state.active else output.compensated_outdoor_temp_c
+    assert paused and recovered and settled
+    assert min(temperatures) < 20.5
+    assert temperatures[-1] == pytest.approx(21.0, abs=0.4)
+    assert max(temperatures) < 21.7
 
 
 class TestManualTargetRecovery:

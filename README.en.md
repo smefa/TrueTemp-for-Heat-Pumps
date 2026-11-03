@@ -41,6 +41,11 @@ house, over a few days — there are no settings to fiddle with.
   the difference.
 - ☀️💨 **Accounts for sun and wind** (optional) — for homes where sunlight
   genuinely warms the room, or where draughts are a real issue.
+- 🔥 **Can pause heating when a wood stove or sunshine warms the house**
+  (optional, beta) — see [Fireplace and excess heat](#fireplace-and-excess-heat)
+  for supported outputs and the required heat-pump setting.
+- 🌡️ **Helps reach a new target** — temporarily adjusts heating when you
+  change the indoor target, then returns to normal control as the house catches up.
 - 🧳 **[Holiday mode](#holiday-mode)** (optional) — set up one or more
   named trips, one-off or recurring, and let TrueTemp work out exactly
   when to start warming the house back up so it's warm right as you get
@@ -136,6 +141,10 @@ Everything below is optional and can be skipped:
 
 - **Extra indoor sensors** — combine up to four more with the one above,
   either averaged or set to heat to whichever room is coldest.
+- **Indoor sensor checks** — avoids relying on a sensor that has stopped
+  reporting. You can adjust how long TrueTemp waits before treating it as unavailable.
+- **Fireplace / excess heat** — lets heating take a break when a wood stove
+  warms the house. Off by default; see the safety guidance below.
 - **Sun and wind compensation** — for homes where these genuinely affect the
   room you're measuring in.
 - **Acting on the weather forecast** — starts heating a little harder before a
@@ -150,7 +159,26 @@ Everything below is optional and can be skipped:
   curve offset, if it has one (see above); or a `climate` entity with its own
   room sensor, for pumps and TRVs that have one (see above).
 - **Local logging** — a detailed log file on your own machine, for anyone who
-  wants to dig into the numbers. Nothing is sent anywhere.
+  wants to dig into the numbers, plus a separate history of update errors.
+  Nothing is sent anywhere.
+
+---
+
+## Fireplace and excess heat
+
+Using a wood stove? Turn on **Fireplace / excess heat** and TrueTemp can
+pause heating when the house is already warm, then let it resume as the house
+cools. The switch is off by default. Sunshine can do the same when **Solar**
+is enabled.
+
+**Before testing:** this only works when TrueTemp controls the pump through
+its outdoor-temperature reading, not through a curve offset or a room target.
+Your pump must be set to stop space heating below **25 °C**. Hot water is
+not affected.
+
+This is a beta feature and still needs real-house testing. See the
+[technical reference](docs/TECHNICAL.md#fireplace-and-solar-excess-heat)
+for the details.
 
 ---
 
@@ -214,6 +242,10 @@ with no restart needed. Your settings and schedules are kept. It can't be
 undone, and there is deliberately no button for it, so it can't be pressed by
 accident. If the new sensor reads within about half a degree of the old one,
 you can skip this.
+
+You can also reset only what TrueTemp has learned for the current outdoor
+conditions, instead of starting over completely. What it learned for other
+outdoor temperatures is kept.
 
 ---
 

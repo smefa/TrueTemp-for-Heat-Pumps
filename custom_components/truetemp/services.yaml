@@ -106,6 +106,28 @@ vacation_plan_remove:
       selector:
         text:
 
+pause_heating:
+  fields:
+    config_entry_id:
+      required: true
+      selector:
+        config_entry:
+          integration: truetemp
+    duration:
+      required: false
+      default:
+        hours: 2
+      selector:
+        duration:
+
+resume_heating:
+  fields:
+    config_entry_id:
+      required: true
+      selector:
+        config_entry:
+          integration: truetemp
+
 reset_learning:
   fields:
     config_entry_id:

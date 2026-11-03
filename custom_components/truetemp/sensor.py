@@ -486,6 +486,16 @@ class StatusSensor(TrueTempEntity, SensorEntity):
             ),
         }
         if result is not None:
+            pause = self.coordinator.heating_pause
+            if pause.active or pause.learning_frozen(time.monotonic()) or pause.release_reason:
+                attrs["heating_paused"] = pause.active
+                attrs["heating_pause_remaining_minutes"] = (
+                    round(max(0.0, pause.deadline_s - time.monotonic()) / 60, 1)
+                    if pause.active else 0.0
+                )
+                attrs["heating_pause_learning_frozen"] = pause.learning_frozen(time.monotonic())
+                attrs["heating_pause_release_reason"] = pause.release_reason
+                attrs["pause_recovery_adjustment_c"] = result.pause_recovery_adjustment_c
             attrs["excess_heat_enabled"] = self.coordinator.excess_heat_enabled
             attrs["excess_heat_supported"] = (
                 self.coordinator.output_mode == OUTPUT_MODE_OUTDOOR_SPOOF

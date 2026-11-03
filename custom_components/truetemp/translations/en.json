@@ -423,6 +423,21 @@
     }
   },
   "services": {
+    "pause_heating": {
+      "name": "Pause heating",
+      "description": "Temporarily suppress heating, then resume automatically with bounded recovery. Does not block hot water or guarantee a complete heating stop. Requires active compensation and fresh sensors.",
+      "fields": {
+        "config_entry_id": { "name": "Zone", "description": "Which TrueTemp zone to pause." },
+        "duration": { "name": "Duration", "description": "Defaults to 2 hours. Maximum 24 hours continuously; another request replaces the remaining timer." }
+      }
+    },
+    "resume_heating": {
+      "name": "Resume heating",
+      "description": "End a heating pause early. Temporary recovery assistance and a learning holdoff protect the learned offsets.",
+      "fields": {
+        "config_entry_id": { "name": "Zone", "description": "Which TrueTemp zone to resume." }
+      }
+    },
     "reset_learning": {
       "name": "Reset learned data",
       "description": "Erase what this zone has learned (offset table and response-time estimate) and start over. Use after replacing the outdoor or indoor sensor. Settings and schedules are kept. This cannot be undone.",

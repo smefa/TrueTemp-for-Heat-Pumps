@@ -401,6 +401,81 @@ The status sensor, dashboard card and optional data log report
 Observed diagnostics support detection, but actual pump shutdown and comfort
 after resuming still require a real-house test.
 
+![Recorded indoor temperature against a 21.5 °C target, with replayed excess-heat pause periods shaded green](excess-heat-replay.png)
+
+Recorded indoor temperature from October 31 to November 2, with a 21.5 °C
+target. Green shading shows when the excess-heat logic would have paused
+heating in a replay. The temperature trace is the original recording, not a
+prediction of how the house would cool with heating paused, and does not
+demonstrate actual pump shutdown.
+
+### External heating pause (advanced actions)
+
+`truetemp.pause_heating` temporarily suppresses heating in one zone. It adds no
+settings, switches or dashboard controls. Pass `config_entry_id` and optionally
+`duration` (default two hours; positive duration up to 24 hours). A new request
+replaces the remaining timer, but cannot extend one continuous pause beyond
+24 hours. `truetemp.resume_heating` ends the pause early; otherwise a dedicated
+timer releases it automatically, without waiting for the next regular poll.
+
+```yaml
+action: truetemp.pause_heating
+data:
+  config_entry_id: YOUR_TRUETEMP_ENTRY_ID
+  duration:
+    hours: 2
+```
+
+```yaml
+action: truetemp.resume_heating
+data:
+  config_entry_id: YOUR_TRUETEMP_ENTRY_ID
+```
+
+For EV priority, call pause when charging starts and resume when it ends.
+Use the charger's actual charging state, not merely whether a cable is connected.
+Compensation must be on and all configured indoor sensors must be fresh and
+above the zone's comfort minimum. Missing/stale indoor data, reaching the
+comfort minimum in the coldest room, disabling compensation, or losing the
+outdoor sensor releases the pause. With the general indoor age check disabled,
+this action still requires readings no older than four hours. The outdoor
+sensor also has a four-hour freshness fallback when its age check is disabled.
+Pauses and
+recovery are not restored after a Home Assistant restart or integration reload.
+
+All output modes support the request, with different capabilities:
+
+- **Outdoor spoofing** publishes 25 °C. Verify that the pump's heating-stop
+  threshold is below that and the output device accepts that temperature.
+- **Heat-curve offset** requests the entity's lowest-heating bound, respecting
+  the configured sign inversion and the entity's supported integer range.
+- **Indoor climate** requests the entity's minimum supported temperature.
+
+These are requests, not confirmation that heating or the compressor has
+stopped. In particular, offset and room-target control cannot guarantee a stop.
+The action does not block domestic hot water or disconnect the pump's power.
+
+On release, a house below target gets temporary assistance using the existing
+recovery response: twice the indoor deficit, capped at 2 °C indoor-equivalent
+adjustment, fading to zero within 0.1 °C of target. Its deadline is twice the
+measured heating rise time, bounded to 2–6 hours. It does not stack with manual
+target recovery or vacation recovery, and is cancelled by the outdoor heating
+hard limit or an active excess-heat pause. No deficit means no boost; recovery
+stays armed for one heating rise time to catch delayed cooling from the pause.
+
+Both active-offset and inactive-baseline learning, and response-time event
+collection, are held during the pause and recovery, then for one measured
+heating rise time (bounded to 15 minutes–6 hours) after recovery ends.
+Deadlines do not continually extend if the house stays cold. The next learning
+sample is also protected when a pause ends between learning ticks.
+Previously measured response times are retained while clean event history
+rebuilds, and replaced independently as new rise/fall measurements become available.
+
+After use, the existing status sensor exposes `heating_paused`,
+`heating_pause_remaining_minutes`, `heating_pause_learning_frozen`,
+`heating_pause_release_reason` and `pause_recovery_adjustment_c`.
+Pump shutdown and post-pause comfort still require testing on the real system.
+
 ## Saving money on electricity
 
 Optional, and off until you give it a price sensor. Two controls, both on the

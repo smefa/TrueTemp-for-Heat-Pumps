@@ -1119,6 +1119,8 @@ class HeuristicResult:
     excess_heat_source: str | None = None
     # See `HeuristicParams.user_indoor_target_c`.
     user_indoor_target_c: float = 0.0
+    heating_paused: bool = False
+    pause_recovery_adjustment_c: float = 0.0
 
 
 def compute(inputs: HeuristicInputs, params: HeuristicParams) -> HeuristicResult:

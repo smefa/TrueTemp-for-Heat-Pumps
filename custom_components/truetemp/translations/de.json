@@ -423,6 +423,21 @@
     }
   },
   "services": {
+    "pause_heating": {
+      "name": "Heizung pausieren",
+      "description": "Heizung vorübergehend reduzieren und automatisch mit begrenzter Aufholhilfe fortsetzen. Sperrt kein Warmwasser und garantiert keinen vollständigen Heizungsstopp. Erfordert aktive Kompensation und aktuelle Sensorwerte.",
+      "fields": {
+        "config_entry_id": { "name": "Zone", "description": "Welche TrueTemp-Zone pausiert werden soll." },
+        "duration": { "name": "Dauer", "description": "Standard: 2 Stunden. Höchstens 24 Stunden am Stück; eine neue Anfrage ersetzt die verbleibende Zeit." }
+      }
+    },
+    "resume_heating": {
+      "name": "Heizung fortsetzen",
+      "description": "Eine Heizpause vorzeitig beenden. Vorübergehende Aufholhilfe und eine Lernpause schützen die gelernten Offsets.",
+      "fields": {
+        "config_entry_id": { "name": "Zone", "description": "Welche TrueTemp-Zone fortgesetzt werden soll." }
+      }
+    },
     "reset_learning": {
       "name": "Gelernte Daten zurücksetzen",
       "description": "Löscht, was diese Zone gelernt hat (Offset-Tabelle und Reaktionszeit-Schätzung), und beginnt von vorn. Nach dem Tausch des Außen- oder Innensensors verwenden. Einstellungen und Zeitpläne bleiben erhalten. Kann nicht rückgängig gemacht werden.",
