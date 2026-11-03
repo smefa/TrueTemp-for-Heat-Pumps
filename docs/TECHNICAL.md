@@ -54,6 +54,26 @@ compensated outdoor = real outdoor
                     + price              optional
 ```
 
+### Manual target changes
+
+Changing the occupied indoor target by at least 0.1 C starts temporary assistance:
+more heating for a raised target, less heating for a lowered target. Like vacation
+recovery, assistance follows the remaining indoor temperature gap and tapers as
+the rooms approach the target. It stops within 0.1 C (20% of smaller steps, with
+a 0.05 C minimum stopping margin),
+when the target is crossed, or at a safety deadline of twice the estimated rise
+time, bounded to 2-6 hours. Assistance is capped at 2 C indoor-equivalent before
+conversion to outdoor spoof; the usual output and heating safety limits still apply.
+
+The learner pauses during assistance and then resumes finding the new holding
+level. Price braking and precharging pause while manual assistance is applied;
+price information remains visible. Vacation setback/return/recovery takes precedence.
+Turning compensation off
+or reaching the outdoor heating cutoff cancels assistance; an unavailable indoor
+sensor suppresses it without extending the deadline. Another target change replaces
+the pending recovery. Recovery is not restored after a restart. Local data logs
+include `manual_target_adjustment_c` in outdoor-spoof degrees.
+
 ### It learns something in both states
 
 Integral action only works while its output is actually applied — you cannot
@@ -324,6 +344,63 @@ being held *below* target this time.
 
 ---
 
+### Fireplace and solar excess heat
+
+In outdoor-temperature spoof mode, TrueTemp can temporarily publish **25 °C**
+to request a space-heating stop when measured indoor warmth exceeds the normal
+controller's correction range. Check that the pump's own space-heating stop
+temperature is below 25 °C before testing. This does not control hot water.
+Heat-curve-offset and indoor-climate outputs do not support this pause: their
+available adjustments cannot guarantee a stop. The status attribute
+`excess_heat_supported` reports whether the selected output supports it.
+
+The new **Fireplace / excess heat** switch is off by default. The existing
+**Solar** setting also enables solar pauses, with no separate solar-pause switch.
+Both use the same measured triggers, using the **coldest** configured indoor
+sensor regardless of the normal aggregation setting:
+
+- Slow: at least 1.5 °C above target continuously for 45 minutes. The margin is
+  adjustable under Sources (1–4 °C).
+- Fast: rising at least 1 °C/hour and at least 1 °C above target continuously
+  for 15 minutes. A fast rise freezes learning immediately, even below target.
+
+The rise rate compares the current reading with the nearest retained reading
+at least 15 minutes old, at most 30 minutes old. Rate history keeps at most one
+reading per minute. Gaps over 20 minutes reset evidence. Every configured
+sensor must be available and fresh; the configured indoor maximum age applies,
+with a four-hour fallback when that check is disabled. A flat but reporting
+sensor remains valid. Sensor composition or target changes reset evidence and
+release a pause. Pauses are not restored after restart.
+
+Solar eligibility requires enabled Solar, an available cloud forecast and at
+least 0.3 °C of current modelled solar gain. This lower threshold replaces the
+unvalidated 2 °C proposal, which missed morning warmth in the reporter's log.
+Solar gets priority when both sources qualify; the source which starts a pause
+keeps its release rule. These labels describe control reasons, not proof of a fire.
+
+A fireplace pause releases at target +0.5 °C. A solar pause releases at target
++1 °C while the live solar signal or next-hour forecast is falling, or whenever
+modelled gain disappears (at most 0.05 °C), the solar forecast becomes unavailable,
+or Solar is disabled. Solar also releases unconditionally at target +0.5 °C so
+a sunny forecast cannot keep heating paused after the rooms cool.
+Disabling the fireplace switch releases its pause.
+Missing or stale indoor data also releases immediately. The pause output is
+applied without a ramp and is separate from the summer cutoff's hysteresis.
+
+Price precharge/catch-up, weather pre-ramp, vacation recovery and manual target
+recovery cannot start a pause. Learning and response-event collection freeze
+during fast rises and pauses, then remain frozen for one measured heating rise
+time after release or the end of an unpaused fast rise. Learned offsets and
+capacity evidence are preserved; the ordinary transient correction resumes
+after release. Curve-limit notices are suppressed during this freeze.
+The heating response calculation itself is unchanged.
+
+The status sensor, dashboard card and optional data log report
+`excess_heat_source` (`fireplace`, `solar`, or null). Status and logs also include
+`excess_heat_drift_c_per_h` and `excess_heat_learning_frozen`.
+Observed diagnostics support detection, but actual pump shutdown and comfort
+after resuming still require a real-house test.
+
 ## Saving money on electricity
 
 Optional, and off until you give it a price sensor. Two controls, both on the
@@ -443,10 +520,15 @@ plan":
 `truetemp.reset_learning` (`config_entry_id`) is separate and deliberately has
 no card or entity: run it from Developer Tools → Actions after replacing the
 outdoor or indoor sensor. It resets the offset table and the lag buffer to a
-cold start and saves immediately; the price-spread history is kept.
+cold start with all bands and the shared learned offset at 0 C, and saves
+immediately; the price-spread history is kept. Normal learning and transient
+adjustments can move the recommended output away from zero after the reset.
 With `current_band_only: true` it resets only the band the outdoor temperature
 is in now (`prev_bin_index`), together with that band's open-loop baseline; other
-bands, the shared offset and the lag buffer stay.
+bands, the shared offset and the lag buffer stay. The reset band starts at a
+combined learned offset of 0 C at its centre, cancelling its share of the shared
+offset instead of inheriting neighbouring bands. Normal blending between band
+centres still applies, and learning resumes from that starting point.
 
 `vacation_plan_set` runs the same overlap check as the options flow and
 raises a translated `ServiceValidationError` (readable in the Developer
@@ -717,6 +799,15 @@ Off by default. When on, appends one JSON line per cycle to
 `/config/truetemp_data/<entry_id>.jsonl`: raw physical inputs, the
 learner's internal state, and the price forecast the decision actually used.
 Purely local.
+
+Failed updates (`Fel`) and subsequent recoveries are also written to
+`/config/truetemp_data/<entry_id>_errors.jsonl` when logging is enabled.
+Each failure includes its timestamp, exception type and message, including
+the outdoor sensor entity when that source fails. Diagnostics include this
+history under `recent_update_events`, plus the latest 100 events since reload
+under `update_events` even when logging is off. Recovery clears the current
+status error but keeps this history. Error files use the same rotation and
+retention rules as the regular data log.
 
 **Filter on `learner_stepped` when replaying.** A record is written on every
 cycle, including the extra refreshes a recovering source triggers, but the

@@ -21,9 +21,9 @@
 //     priceGraph: false  hide the price-forecast graph
 //     sources: false     hide the source-health row
 
-import { STRINGS as EN } from "./lang/en.js";
-import { STRINGS as DE } from "./lang/de.js";
-import { STRINGS as SV } from "./lang/sv.js";
+import { STRINGS as EN } from "./lang/en.js?v=30";
+import { STRINGS as DE } from "./lang/de.js?v=30";
+import { STRINGS as SV } from "./lang/sv.js?v=30";
 
 // Registry translation_key per entity — stable across languages, unlike the
 // entity_id, whose object_id is slugified from the *translated* friendly name
@@ -731,6 +731,9 @@ class TrueTempCard extends HTMLElement {
     }
     if (attrs.response_time_measured === false) {
       notes.push(t.noteResponseNotMeasured);
+    }
+    if (attrs.excess_heat_source) {
+      notes.push(attrs.excess_heat_source === "solar" ? t.noteSolarPause : t.noteExcessHeatPause);
     }
     if (attrs.heating_hard_limit_engaged) {
       notes.push(t.noteHeatingHardLimit);

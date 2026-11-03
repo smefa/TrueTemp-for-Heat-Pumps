@@ -79,6 +79,7 @@
           "indoor_temp_sensors_extra": "Extra inomhusgivare",
           "indoor_aggregation": "Hur flera givare kombineras",
           "outdoor_temp_sensor": "Utomhustemperaturgivare",
+          "indoor_sensor_max_age_hours": "Betrakta inomhusgivare som felaktig efter (timmar)",
           "outdoor_sensor_max_age_hours": "Betrakta utomhusgivaren som felaktig efter (timmar)",
           "heating_type": "Hur värmen kommer in i rummet",
           "enable_data_logging": "Håll en detaljerad lokal logg"
@@ -88,6 +89,7 @@
           "indoor_temp_sensors_extra": "Valfritt, upp till fyra till. Kombineras med givaren ovan med hjälp av läget nedan — användbart för ett hus där ett rum genomgående är kallare än resten, eller för att förhindra att en enskild givares störningar tolkas som en verklig temperaturändring.",
           "indoor_aggregation": "Genomsnitt tar medelvärdet av alla givare som rapporterar. Lägst värmer till det kallaste rummet — huset lägger sig med varje annat rum över målet, och prisbesparingens golv skyddar då det kallaste rummet i stället för det genomsnittliga. Högst slutar värma när det varmaste rummet är bekvämt — kallare rum hamnar under målet, så använd med försiktighet. Spelar bara roll när extra givare har lagts till ovan.",
           "outdoor_temp_sensor": "En riktig utomhusgivare om du har en — den är oftast mer exakt än en väderleksuppskattning.",
+          "indoor_sensor_max_age_hours": "Om en inomhusgivare inte har rapporterat på så här många timmar betraktas den som otillgänglig, och TrueTemp behåller sin inlärda offset i stället för att lita på ett fruset värde. 0 stänger av kontrollen. En givare som fortsätter rapportera samma värde räknas som levande; bara en som slutat rapportera utlöser detta.",
           "outdoor_sensor_max_age_hours": "Om utomhusgivaren inte har rapporterat på så här många timmar betraktas den som felaktig, och OhmOnWifi-enheten går tillbaka till den riktiga externa givaren. 0 stänger av kontrollen. En givare som fortsätter rapportera samma värde räknas som levande; bara en som slutat rapportera utlöser detta.",
           "heating_type": "Används bara de första dagarna. Efter det har TrueTemp mätt hur snabbt ditt hus reagerar och slutar förlita sig på detta svar.",
           "enable_data_logging": "Skriver en rad per cykel till en fil i din config-mapp. Inget lämnar din maskin. Användbart om du någon gång vill kontrollera hur väl den har presterat."
@@ -101,14 +103,18 @@
           "nordpool_price_entity": "Elpris",
           "enable_solar_input": "Kompensera för solsken",
           "enable_wind_input": "Kompensera för vind",
-          "enable_weather_lookahead": "Agera på prognosen"
+          "enable_weather_lookahead": "Agera på prognosen",
+          "enable_excess_heat": "Braskamin / överskottsvärme",
+          "excess_heat_margin_c": "Temperaturmarginal för långsam uppvärmning"
         },
         "data_description": {
           "weather_entity": "Används bara för sol- och vindprognosen. Behövs inte om båda är avstängda nedan.",
           "nordpool_price_entity": "En Nordpool-givare med dagens och morgondagens timpriser. Utan en gör prisbesparing ingenting.",
-          "enable_solar_input": "Backar av lite när solen värmer huset. Slå bara på detta om din inomhusgivare — eller, med fler än en konfigurerad, deras kombinerade avläsning — sitter någonstans dit solen faktiskt når. En givare i en källare, ett norrvänt rum eller en hall ser aldrig solinstrålningen, så detta skulle sänka temperaturen för en uppvärmning som inget du mäter kan bekräfta.",
+          "enable_solar_input": "Backar av lite när solen värmer huset. Slå bara på detta om din inomhusgivare — eller, med fler än en konfigurerad, deras kombinerade avläsning — sitter någonstans dit solen faktiskt når. En givare i en källare, ett norrvänt rum eller en hall ser aldrig solinstrålningen, så detta skulle sänka temperaturen för en uppvärmning som inget du mäter kan bekräfta. Pausar även rumsvärmen vid uppmätt övervärme från solen (endast simulerad utetemperatur), med både snabba och långsamma villkor.",
           "enable_wind_input": "Lägger till lite när vind drar ut värme ur huset. Låt detta vara avstängt om du inte har ett äldre, dragigt hus som du märker blir kallare i hård vind. Ett rimligt tätt hus reagerar knappt på vind, och att kompensera för en effekt som inte finns lägger bara till brus.",
-          "enable_weather_lookahead": "Börjar värma lite hårdare innan en kallfront eller tilltagande vind faktiskt kommer, i stället för att vänta tills huset hunnit svalna. Solen fungerar tvärtom: värmen hålls tillbaka innan ett solskensskov kommer, så att huset inte överhettas när solens egen värme väl är här. Vardera effekt tonar ut när dess förändring är här. Kräver väderprognosentiteten ovan."
+          "enable_weather_lookahead": "Börjar värma lite hårdare innan en kallfront eller tilltagande vind faktiskt kommer, i stället för att vänta tills huset hunnit svalna. Solen fungerar tvärtom: värmen hålls tillbaka innan ett solskensskov kommer, så att huset inte överhettas när solens egen värme väl är här. Vardera effekt tonar ut när dess förändring är här. Kräver väderprognosentiteten ovan.",
+          "enable_excess_heat": "Pausa rumsvärmen automatiskt vid uppmätt överskottsvärme. Av som standard. Endast simulerad utetemperatur; pumpens värmestopp måste ligga under 25°C.",
+          "excess_heat_margin_c": "Grader över börvärdet för det långsamma villkoret på 45 minuter. Snabbvillkor: +1°C i 15 minuter med minst 1°C/timmes ökning."
         }
       },
       "price": {
@@ -291,6 +297,9 @@
       },
       "vacation_mode": {
         "name": "Semesterläge"
+      },
+      "excess_heat": {
+        "name": "Braskamin / överskottsvärme"
       }
     },
     "select": {

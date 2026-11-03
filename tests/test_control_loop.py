@@ -29,6 +29,8 @@ heuristic = load("heuristic")
 holiday = load("holiday")
 lag = load("lag")
 learner = load("learner")
+target_recovery = load("target_recovery")
+excess_heat = load("excess_heat")
 
 STEP_MINUTES = 15.0
 STEP_HOURS = STEP_MINUTES / 60.0
@@ -98,6 +100,7 @@ def run(
     now: float = 0.0,
     return_state: bool = False,
     on_output=None,
+    manual_recovery: bool = False,
 ):
     """Drive the full loop and return (trace, final learner result, final output).
 
@@ -142,6 +145,9 @@ def run(
     result = None
     output = None
     lag_result = None
+    recovery_state = target_recovery.TargetRecovery(
+        target_c if target_at is None else target_at(0)
+    )
 
     for i in range(steps):
         current_target = target_c if target_at is None else target_at(i)
@@ -152,6 +158,18 @@ def run(
 
         lag_state = lag.push(lag_state, offset, indoor, current_target)
         lag_result = lag.estimate(lag_state, "radiators")
+
+        manual_adjustment_c = 0.0
+        if manual_recovery:
+            recovery_state, manual_adjustment_c = target_recovery.resolve(
+                recovery_state,
+                now_s=now,
+                target_c=current_target,
+                indoor_temp_c=indoor,
+                indoor_available=True,
+                enabled=is_active,
+                rise_hours=lag_result.rise_hours,
+            )
 
         price, forecast = (None, None) if price_at is None else price_at(i)
 
@@ -171,6 +189,10 @@ def run(
                     previous_output and previous_output.weather_preramp_active
                 ),
                 rise_hours=lag_result.rise_hours,
+                manual_target_recovery=bool(
+                    manual_adjustment_c
+                    or (previous_output and previous_output.manual_target_adjustment_c)
+                ),
             ),
         )
 
@@ -183,6 +205,7 @@ def run(
             enable_solar_input=False,
             enable_wind_input=False,
             spoof_per_indoor_c=learner.SPOOF_PER_INDOOR_C,
+            manual_target_adjustment_c=manual_adjustment_c * learner.SPOOF_PER_INDOOR_C,
         )
         params.update(params_overrides or {})
 
@@ -228,6 +251,100 @@ def run(
     if return_state:
         return trace, result, output, learner_state, lag_state, now
     return trace, result, output
+
+
+def test_fireplace_pause_preserves_learning_through_release_and_recovery():
+    """A delayed plant with a temporary fire must not rewrite its equilibrium."""
+    house = House(curve_error_c=0.0, indoor_c=21.0, delay_steps=2)
+    state = learner.initial_state()
+    pause = excess_heat.ExcessHeatState()
+    lag_state = lag.initial_state(STEP_MINUTES)
+    offset = 0.0
+    paused = released = False
+    saved_bins = None
+    saved_shared = None
+    for index in range(100):
+        now = index * 900.0
+        # External warmth enters through the house, never its desired target.
+        house.base_indoor_c = 25.0 if 1 <= index < 18 else 21.0
+        # Approximate heat-off as a finite reduction, not a 25-degree indoor
+        # drop from extrapolating the ordinary linear curve indefinitely.
+        indoor = house.advance(min(offset, 3.0))
+        response = lag.estimate(lag_state, "radiators")
+        pause = excess_heat.advance(
+            pause, now_s=now, indoor_c=indoor, target_c=21.0,
+            sensors=frozenset({"room"}), available=True,
+            fireplace_enabled=True, solar_enabled=False, solar_gain_c=0.0,
+            solar_falling=False, excluded=False, rise_hours=response.rise_hours,
+        )
+        frozen = pause.learning_frozen(now)
+        if pause.source and not paused:
+            paused = True
+            saved_bins, saved_shared = state.bins, state.shared_offset_c
+        if paused and frozen:
+            assert state.bins == saved_bins
+            assert state.shared_offset_c == saved_shared
+        if paused and not pause.source:
+            released = True
+        if released and not frozen:
+            assert state.bins == saved_bins
+            assert state.shared_offset_c == saved_shared
+            break
+        lag_state = lag.push(lag_state, offset, None if frozen else indoor, 21.0)
+        state, learned = learner.step(state, learner.LearnerInputs(
+            now_s=now, dt_hours=STEP_HOURS, indoor_temp_c=indoor,
+            indoor_data_available=True, target_c=21.0, outdoor_temp_c=5.0,
+            heating_hard_limit_engaged=False, is_active=True, price_braking=False,
+            rise_hours=response.rise_hours, excess_heat=frozen,
+        ))
+        output = heuristic.compute(heuristic.HeuristicInputs(
+            indoor_temp_c=indoor, indoor_data_available=True, raw_outdoor_temp_c=5.0,
+            wind_speed_ms=0.0, wind_data_available=False, sun_elevation_deg=-10.0,
+            sun_azimuth_deg=180.0, cloud_coverage_pct=100.0, cloud_data_available=False,
+            current_price=None, price_data_available=False,
+            learned_offset_c=learned.offset_c, excess_heat_source=pause.source,
+        ), heuristic.HeuristicParams(21.0, 18.0, False, enable_solar_input=False))
+        offset = output.compensated_outdoor_temp_c - 5.0
+        if pause.source:
+            assert output.compensated_outdoor_temp_c == 25.0
+    assert paused and released
+
+
+class TestManualTargetRecovery:
+    @pytest.mark.parametrize("target", [20.5, 21.5])
+    @pytest.mark.parametrize("delay_steps, inertia", [(4, 0.15), (8, 0.06)])
+    def test_half_degree_change_responds_immediately_and_settles(
+        self, target, delay_steps, inertia
+    ):
+        outputs = []
+        trace, result, _ = run(
+            House(delay_steps=delay_steps, inertia=inertia),
+            2200,
+            target_at=lambda step: 21.0 if step < 1200 else target,
+            manual_recovery=True,
+            on_output=outputs.append,
+        )
+        first = outputs[1200]
+        expected_direction = 1.0 if target < 21.0 else -1.0
+        assert first.manual_target_adjustment_c * expected_direction > 0.8
+        assert trace[-1][0] == pytest.approx(target, abs=0.15)
+        assert result.hold_offset_c == pytest.approx(19.0 - target, abs=0.3)
+        assert outputs[-1].manual_target_adjustment_c == 0.0
+        assert all(abs(output.manual_target_adjustment_c) <= 2.0 for output in outputs)
+        assert max(abs(indoor - target) for indoor, _, _ in trace[1300:]) < 0.6
+
+    @pytest.mark.parametrize("target", [20.5, 21.5])
+    def test_assistance_moves_rooms_before_learning_alone(self, target):
+        traces = [
+            run(
+                House(),
+                1240,
+                target_at=lambda step: 21.0 if step < 1200 else target,
+                manual_recovery=assisted,
+            )[0]
+            for assisted in (False, True)
+        ]
+        assert abs(traces[1][1206][0] - 21.0) > abs(traces[0][1206][0] - 21.0) + 0.1
 
 
 class TestConvergence:

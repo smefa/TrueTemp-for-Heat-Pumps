@@ -134,6 +134,7 @@ def serialize(
                 "close_rate_c_per_h": b.close_rate_c_per_h,
                 "samples": b.samples,
                 "seeded": b.seeded,
+                "explicit_reset": b.explicit_reset,
             }
             for b in state.bins
         ],
@@ -362,6 +363,7 @@ def deserialize(
                     close_rate_c_per_h=close_rate,
                     samples=samples,
                     seeded=seeded,
+                    explicit_reset=bool(item.get("explicit_reset", False)),
                 )
             )
         total_samples = int(data["total_samples"])

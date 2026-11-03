@@ -327,6 +327,7 @@ class OutdoorBin:
     # different weight: `samples` is evidence our own action works and drives the
     # authority ramp, while a seed is only a better starting guess than zero.
     seeded: bool = False
+    explicit_reset: bool = False
 
 
 @dataclass(frozen=True)
@@ -424,6 +425,8 @@ class LearnerInputs:
     # and leave them wrong after return. Defaults False so every existing call
     # site is unaffected.
     vacation_feedforward: bool = False
+    manual_target_recovery: bool = False
+    excess_heat: bool = False
     # True when the set of contributing indoor sensors differs from last
     # cycle (a sensor joined or dropped out of the aggregate). The aggregate
     # value took a step that is not a real temperature change, so the
@@ -516,13 +519,19 @@ def initial_state() -> LearnerState:
 
 
 def reset_bin(state: LearnerState, index: int) -> LearnerState:
-    """Forget one band's learned part and its baseline. The shared part and the other bands stay.
+    """Reset one band's combined offset to zero at its centre and clear its baseline.
 
     The baseline goes too: it seeds the band's offset the next time compensation
-    switches on, which would bring back what was just reset.
+    switches on, which would bring back what was just reset. An explicit value
+    prevents unvisited-band interpolation from restoring neighbouring learning.
+    The shared part and the other bands stay unchanged.
     """
     index = max(0, min(N_BINS - 1, index))
-    bins = tuple(OutdoorBin() if i == index else b for i, b in enumerate(state.bins))
+    fresh_bin = OutdoorBin(
+        hold_offset_c=0.0 - shared_weight(bin_centre(index)) * state.shared_offset_c,
+        explicit_reset=True,
+    )
+    bins = tuple(fresh_bin if i == index else b for i, b in enumerate(state.bins))
     baseline_bins = tuple(
         BaselineBin() if i == index else b for i, b in enumerate(state.baseline_bins)
     )
@@ -543,14 +552,15 @@ def coverage_of(bins: tuple[OutdoorBin, ...]) -> float:
 
 
 def _has_value(b: OutdoorBin) -> bool:
-    """Whether a bin holds a usable offset, learned or seeded.
+    """Whether a bin holds a usable offset, learned, seeded or explicitly reset.
 
     A seeded bin counts: an open-loop measurement of what the raw curve did in
     *this* band beats interpolating from a neighbouring band, even though it is
     weaker evidence than closed-loop integration. It deliberately does NOT count
-    towards `coverage_of`, which reports proven learning.
+    towards `coverage_of`, which reports proven learning. An explicit reset
+    likewise takes precedence over neighbouring values without claiming evidence.
     """
-    return b.samples > 0 or b.seeded
+    return b.samples > 0 or b.seeded or b.explicit_reset
 
 
 def effective_hold_offset(bins: tuple[OutdoorBin, ...], index: int) -> float:
@@ -603,6 +613,8 @@ def _freeze_reason(inputs: LearnerInputs, state: LearnerState) -> str | None:
         return "indoor sensor unavailable"
     if inputs.indoor_sensor_set_changed:
         return "the set of contributing indoor sensors changed"
+    if inputs.excess_heat:
+        return "excess heat warm-up, pause or recovery"
     if inputs.heating_hard_limit_engaged:
         return "heating hard limit engaged, output is forced rather than learned"
     if inputs.price_braking:
@@ -619,6 +631,8 @@ def _freeze_reason(inputs: LearnerInputs, state: LearnerState) -> str | None:
         return "sun is warming the house, the sun adjustment covers that"
     if inputs.vacation_feedforward:
         return "vacation setback/catch-up is holding away from the occupied target"
+    if inputs.manual_target_recovery:
+        return "manual target recovery is temporarily adjusting heating"
     if state.holdoff_until_s is not None and inputs.now_s < state.holdoff_until_s:
         remaining = (state.holdoff_until_s - inputs.now_s) / 60.0
         return f"waiting {remaining:.0f} min for the last change to reach the room"
@@ -688,6 +702,8 @@ def _observe_baseline(
     """
     if not inputs.indoor_data_available or inputs.indoor_temp_c is None:
         return baseline_bins, "indoor sensor unavailable"
+    if inputs.excess_heat:
+        return baseline_bins, "excess heat warm-up, pause or recovery"
     if inputs.heating_hard_limit_engaged:
         # This far above the hard limit the raw curve is not heating either,
         # so where the house sits is free-floating (solar, venting, an AC

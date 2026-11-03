@@ -25,6 +25,74 @@ HeuristicParams = heuristic.HeuristicParams
 compute = heuristic.compute
 
 
+@pytest.mark.parametrize("source", ["fireplace", "solar"])
+def test_excess_heat_output_is_immediate_and_separate_from_summer_latch(source):
+    result = compute(make_inputs(excess_heat_source=source, learned_offset_c=-5.0), make_params())
+    assert result.compensated_outdoor_temp_c == 25.0
+    assert result.learned_offset_c == -5.0
+    assert result.excess_heat_source == source
+    assert not result.heating_hard_limit_engaged
+    resumed = compute(
+        make_inputs(prev_heating_hard_limit_engaged=result.heating_hard_limit_engaged),
+        make_params(),
+    )
+    assert resumed.compensated_outdoor_temp_c < 25.0
+
+
+class TestManualTargetRecovery:
+    @pytest.mark.parametrize("adjustment", [-1.0, 1.0])
+    def test_manual_adjustment_composes_with_learned_offset(self, adjustment):
+        output = compute(
+            make_inputs(learned_offset_c=-2.0),
+            make_params(manual_target_adjustment_c=adjustment),
+        )
+        assert output.compensated_outdoor_temp_c == pytest.approx(1.0 + adjustment)
+        assert output.manual_target_adjustment_c == adjustment
+        assert "manual target recovery" in output.reason
+
+    def test_heating_cutoff_overrides_recovery(self):
+        output = compute(
+            make_inputs(raw_outdoor_temp_c=30.0),
+            make_params(manual_target_adjustment_c=-2.0),
+        )
+        assert output.compensated_outdoor_temp_c == heuristic.OUTPUT_SANITY_MAX_C
+        assert output.manual_target_adjustment_c == 0.0
+
+    @pytest.mark.parametrize("adjustment", [-1.0, 1.0])
+    @pytest.mark.parametrize("price, spike_at", [(5.0, 0), (1.0, 1)])
+    def test_manual_recovery_takes_precedence_over_price_actions(
+        self, adjustment, price, spike_at
+    ):
+        inputs = make_inputs(
+            current_price=price,
+            price_data_available=True,
+            price_forecast=spiky_forecast(spike_at=spike_at),
+        )
+        params = make_params(
+            enable_price_compensation=True,
+            price_comfort_tier="high",
+            cold_caution="low",
+            manual_target_adjustment_c=adjustment,
+        )
+        output = compute(inputs, params)
+        assert output.price_adjustment_c == 0.0
+        assert not output.price_braking
+        assert not output.precharge_active
+        assert output.current_price == price
+        assert output.price_median is not None
+        assert output.manual_target_adjustment_c == adjustment
+        resumed = compute(inputs, replace(params, manual_target_adjustment_c=0.0))
+        assert resumed.price_adjustment_c != 0.0
+
+    @pytest.mark.parametrize("indoor, available", [(None, False), (21.0, False), (None, True)])
+    def test_missing_indoor_suppresses_recovery(self, indoor, available):
+        output = compute(
+            make_inputs(indoor_temp_c=indoor, indoor_data_available=available),
+            make_params(manual_target_adjustment_c=-2.0),
+        )
+        assert output.manual_target_adjustment_c == 0.0
+
+
 def make_params(**overrides) -> HeuristicParams:
     defaults = dict(
         indoor_target_c=21.0,

@@ -54,6 +54,31 @@ def mature_state(**overrides) -> LearnerState:
     return replace(learner.initial_state(), **defaults)
 
 
+class TestManualTargetRecovery:
+    def test_temporary_assistance_does_not_rewrite_holding_offsets(self):
+        state = mature_state()
+        updated, result = learner.step(
+            state,
+            make_inputs(indoor_temp_c=20.0, manual_target_recovery=True),
+        )
+        assert updated.bins == state.bins
+        assert updated.shared_offset_c == state.shared_offset_c
+        assert updated.total_samples == state.total_samples
+        assert "manual target recovery" in result.reason
+
+    def test_learning_resumes_after_assistance(self):
+        state, _ = learner.step(
+            mature_state(),
+            make_inputs(indoor_temp_c=20.0, manual_target_recovery=True),
+        )
+        updated, _ = learner.step(
+            state,
+            make_inputs(now_s=1900.0, indoor_temp_c=20.0),
+        )
+        assert updated.total_samples > state.total_samples
+        assert updated.shared_offset_c < state.shared_offset_c
+
+
 class TestBinning:
     def test_index_covers_the_whole_real_line(self):
         assert learner.bin_index_for(-100.0) == 0
@@ -930,8 +955,27 @@ def test_reset_bin_clears_only_that_band():
     baselines = tuple(learner.BaselineBin(indoor_c=18.0 + i, samples=4) for i in range(n))
     state = LearnerState(bins=bins, baseline_bins=baselines, shared_offset_c=0.7)
     out = learner.reset_bin(state, 3)
-    assert out.bins[3] == OutdoorBin()
+    assert out.bins[3] == OutdoorBin(hold_offset_c=-0.7, explicit_reset=True)
+    assert learner.hold_offset_at(out.bins, out.shared_offset_c, learner.bin_centre(3)) == 0.0
     assert out.baseline_bins[3] == learner.BaselineBin()
     assert all(out.bins[i] == bins[i] for i in range(n) if i != 3)
     assert all(out.baseline_bins[i] == baselines[i] for i in range(n) if i != 3)
     assert out.shared_offset_c == 0.7
+
+
+@pytest.mark.parametrize("index", range(learner.N_BINS))
+@pytest.mark.parametrize("shared_offset", [-5.0, 0.0, 5.0])
+def test_reset_bin_starts_at_zero_without_inheriting_neighbours(index, shared_offset):
+    bins = tuple(OutdoorBin(hold_offset_c=-5.0, samples=10) for _ in range(learner.N_BINS))
+    state = mature_state(bins=bins, shared_offset_c=shared_offset)
+
+    reset = learner.reset_bin(state, index)
+    centre = learner.bin_centre(index)
+    assert learner.hold_offset_at(reset.bins, reset.shared_offset_c, centre) == 0.0
+    assert reset.bins[index].samples == 0
+    assert not reset.bins[index].seeded
+    assert reset.total_samples == state.total_samples
+
+    updated, result = learner.step(reset, make_inputs(outdoor_temp_c=centre))
+    assert result.hold_offset_c == pytest.approx(0.0)
+    assert updated.bins[index].samples > 0

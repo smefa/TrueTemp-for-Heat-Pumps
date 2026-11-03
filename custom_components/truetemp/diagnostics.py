@@ -101,6 +101,9 @@ async def async_get_config_entry_diagnostics(
     recent_history = await async_read_recent_records(
         hass, entry.entry_id, DIAGNOSTICS_HISTORY_DAYS
     )
+    recent_update_events = await async_read_recent_records(
+        hass, f"{entry.entry_id}_errors", DIAGNOSTICS_HISTORY_DAYS
+    )
 
     return {
         "config": {
@@ -215,6 +218,13 @@ async def async_get_config_entry_diagnostics(
         },
         # Trend window from the local data log, oldest first. See module
         # docstring; empty if data logging has never been enabled.
+        # Relay failsafe events since the last restart, oldest first.
+        "ohmonwifi_events": list(coordinator.ohmonwifi_events),
+        "update_events": list(coordinator.update_events),
+        "recent_update_events": {
+            "days": DIAGNOSTICS_HISTORY_DAYS,
+            "records": recent_update_events,
+        },
         "recent_history": {
             "days": DIAGNOSTICS_HISTORY_DAYS,
             "records": recent_history,

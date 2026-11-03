@@ -89,6 +89,25 @@ def populated_price_spread_history() -> "heuristic.PriceSpreadHistory":
 
 
 class TestRoundTrip:
+    @pytest.mark.parametrize("index", range(learner.N_BINS))
+    def test_reset_band_stays_zero_after_reload(self, index):
+        state = learner.reset_bin(populated_state(), index)
+        restored, _, _ = store.deserialize(store.serialize(state, populated_lag()))
+        assert restored.bins == state.bins
+        assert restored.bins[index].explicit_reset
+        assert not restored.bins[index].seeded
+        assert learner.hold_offset_at(
+            restored.bins, restored.shared_offset_c, learner.bin_centre(index)
+        ) == 0.0
+
+    def test_older_payload_without_reset_flag_keeps_learning(self):
+        state = populated_state()
+        payload = store.serialize(state, populated_lag())
+        for band in payload["bins"]:
+            band.pop("explicit_reset")
+        restored, _, _ = store.deserialize(payload)
+        assert restored.bins == state.bins
+
     def test_every_learned_field_survives(self):
         state, lag_state = populated_state(), populated_lag()
         price_history = populated_price_spread_history()

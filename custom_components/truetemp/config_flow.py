@@ -41,6 +41,10 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.util import dt as dt_util
 
 from .const import (
+    CONF_ENABLE_EXCESS_HEAT,
+    CONF_EXCESS_HEAT_MARGIN_C,
+    DEFAULT_ENABLE_EXCESS_HEAT,
+    DEFAULT_EXCESS_HEAT_MARGIN_C,
     CONFIG_ENTRY_VERSION,
     CONF_COMFORT_MIN_C,
     CONF_ENABLE_DATA_LOGGING,
@@ -58,6 +62,7 @@ from .const import (
     CONF_INDOOR_TEMP_SENSORS_EXTRA,
     CONF_NORDPOOL_PRICE_ENTITY,
     CONF_OHMONWIFI_HOST,
+    CONF_INDOOR_SENSOR_MAX_AGE_HOURS,
     CONF_OUTDOOR_SENSOR_MAX_AGE_HOURS,
     CONF_OUTDOOR_TEMP_SENSOR,
     CONF_OUTPUT_MODE,
@@ -70,6 +75,7 @@ from .const import (
     DEFAULT_ENABLE_PRICE_COMPENSATION,
     DEFAULT_ENABLE_SOLAR_INPUT,
     DEFAULT_ENABLE_WIND_INPUT,
+    DEFAULT_INDOOR_SENSOR_MAX_AGE_HOURS,
     DEFAULT_OUTDOOR_SENSOR_MAX_AGE_HOURS,
     DEFAULT_ENABLE_WEATHER_LOOKAHEAD,
     DEFAULT_HEAT_CURVE_OFFSET_INVERT,
@@ -277,6 +283,9 @@ class TrueTempConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             else:
                 await self.async_set_unique_id(user_input[CONF_INDOOR_TEMP_SENSOR])
                 self._abort_if_unique_id_configured()
+                user_input.setdefault(
+                    CONF_INDOOR_SENSOR_MAX_AGE_HOURS, DEFAULT_INDOOR_SENSOR_MAX_AGE_HOURS
+                )
                 return self.async_create_entry(title=user_input[CONF_NAME], data=user_input)
         return self.async_show_form(
             step_id="user", data_schema=_user_data_schema(defaults), errors=errors
@@ -302,8 +311,15 @@ class TrueTempConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 if user_input[CONF_INDOOR_TEMP_SENSOR] != entry.unique_id:
                     await self.async_set_unique_id(user_input[CONF_INDOOR_TEMP_SENSOR])
                     self._abort_if_unique_id_configured()
+                # Not on the reconfigure form, so carry it over rather than
+                # letting the data replacement drop it.
+                kept = {
+                    k: entry.data[k]
+                    for k in (CONF_INDOOR_SENSOR_MAX_AGE_HOURS,)
+                    if k in entry.data
+                }
                 return self.async_update_reload_and_abort(
-                    entry, title=user_input[CONF_NAME], data=user_input
+                    entry, title=user_input[CONF_NAME], data={**kept, **user_input}
                 )
         return self.async_show_form(
             step_id="reconfigure",
@@ -438,6 +454,21 @@ class TrueTempOptionsFlow(config_entries.OptionsFlow):
                         )
                     ),
                     vol.Required(
+                        CONF_INDOOR_SENSOR_MAX_AGE_HOURS,
+                        default=current.get(
+                            CONF_INDOOR_SENSOR_MAX_AGE_HOURS,
+                            DEFAULT_INDOOR_SENSOR_MAX_AGE_HOURS,
+                        ),
+                    ): selector.NumberSelector(
+                        selector.NumberSelectorConfig(
+                            min=0,
+                            max=72,
+                            step=1,
+                            unit_of_measurement="h",
+                            mode="box",
+                        )
+                    ),
+                    vol.Required(
                         CONF_OUTDOOR_TEMP_SENSOR,
                         default=current.get(CONF_OUTDOOR_TEMP_SENSOR),
                     ): selector.EntitySelector(
@@ -525,6 +556,19 @@ class TrueTempOptionsFlow(config_entries.OptionsFlow):
                             CONF_ENABLE_SOLAR_INPUT, DEFAULT_ENABLE_SOLAR_INPUT
                         ),
                     ): selector.BooleanSelector(),
+                    vol.Required(
+                        CONF_ENABLE_EXCESS_HEAT,
+                        default=current.get(CONF_ENABLE_EXCESS_HEAT, DEFAULT_ENABLE_EXCESS_HEAT),
+                    ): selector.BooleanSelector(),
+                    vol.Required(
+                        CONF_EXCESS_HEAT_MARGIN_C,
+                        default=current.get(
+                            CONF_EXCESS_HEAT_MARGIN_C, DEFAULT_EXCESS_HEAT_MARGIN_C,
+                        ),
+                    ): selector.NumberSelector(selector.NumberSelectorConfig(
+                        min=1.0, max=4.0, step=0.1, unit_of_measurement="°C",
+                        mode=selector.NumberSelectorMode.BOX,
+                    )),
                     vol.Required(
                         CONF_ENABLE_WIND_INPUT,
                         default=current.get(

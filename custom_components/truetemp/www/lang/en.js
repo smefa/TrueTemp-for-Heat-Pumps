@@ -55,6 +55,8 @@ export const STRINGS = {
   noteLearningPaused: "Learning paused: {value}",
   notePumpAtCapacity: "The heat pump looks to be at full output for this outdoor temperature.",
   noteResponseNotMeasured: "Still measuring how quickly the house responds — using defaults for now.",
+  noteSolarPause: "Space heating paused: sun.",
+  noteExcessHeatPause: "Space heating paused: fireplace / excess heat.",
   noteHeatingHardLimit: "Warmer outside than the hard heating limit — publishing the warm ceiling to prevent any heat call.",
   notePrecharge: "Banking heat now, ahead of a price spike.",
   notePriceBraking: "Coasting below target to ride out an expensive hour.",

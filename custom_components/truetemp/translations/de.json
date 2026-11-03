@@ -79,6 +79,7 @@
           "indoor_temp_sensors_extra": "Zusätzliche Innensensoren",
           "indoor_aggregation": "Wie mehrere Sensoren kombiniert werden",
           "outdoor_temp_sensor": "Außentemperatursensor",
+          "indoor_sensor_max_age_hours": "Innensensor als ausgefallen behandeln nach (Stunden)",
           "outdoor_sensor_max_age_hours": "Außensensor als ausgefallen behandeln nach (Stunden)",
           "heating_type": "Wie die Wärme in den Raum gelangt",
           "enable_data_logging": "Detailliertes lokales Protokoll führen"
@@ -88,6 +89,7 @@
           "indoor_temp_sensors_extra": "Optional, bis zu vier weitere. Werden mit dem obigen Sensor über den Modus unten kombiniert — nützlich für ein Haus, in dem ein Raum durchgehend kälter ist als der Rest, oder um zu verhindern, dass Ausreißer eines einzelnen Sensors als echte Temperaturänderung gelesen werden.",
           "indoor_aggregation": "Durchschnitt bildet den Mittelwert aller meldenden Sensoren. Niedrigster heizt auf den kältesten Raum — das Haus pendelt sich mit jedem anderen Raum über dem Ziel ein, und die Preisersparnis-Untergrenze schützt dann diesen kältesten statt des durchschnittlichen Raums. Höchster hört auf zu heizen, sobald der wärmste Raum angenehm ist — kältere Räume bleiben unter dem Ziel, daher mit Vorsicht verwenden. Wirkt sich erst aus, sobald oben zusätzliche Sensoren hinzugefügt wurden.",
           "outdoor_temp_sensor": "Ein echter Außensensor, falls vorhanden — er ist meist genauer als die Schätzung eines Wetterdienstes.",
+          "indoor_sensor_max_age_hours": "Hat ein Innensensor so viele Stunden nichts gemeldet, gilt er als nicht verfügbar, und TrueTemp hält seinen gelernten Offset, statt einem eingefrorenen Wert zu vertrauen. 0 schaltet die Prüfung aus. Ein Sensor, der weiter denselben Wert meldet, gilt als aktiv; nur ein Sensor, der nicht mehr meldet, löst dies aus.",
           "outdoor_sensor_max_age_hours": "Hat der Außensensor so viele Stunden nichts gemeldet, gilt er als ausgefallen, und das OhmOnWifi-Gerät schaltet auf den echten externen Sensor zurück. 0 schaltet die Prüfung aus. Ein Sensor, der weiter denselben Wert meldet, gilt als aktiv; nur ein Sensor, der nicht mehr meldet, löst dies aus.",
           "heating_type": "Wird nur für die ersten Tage genutzt. Danach hat TrueTemp gemessen, wie schnell dein Haus reagiert, und verlässt sich nicht mehr auf diese Angabe.",
           "enable_data_logging": "Schreibt pro Zyklus eine Zeile in eine Datei in deinem Konfigurationsordner. Es verlässt nichts deinen Rechner. Nützlich, um zu prüfen, wie gut das System funktioniert hat."
@@ -101,14 +103,18 @@
           "nordpool_price_entity": "Strompreis",
           "enable_solar_input": "Sonneneinstrahlung ausgleichen",
           "enable_wind_input": "Wind ausgleichen",
-          "enable_weather_lookahead": "Auf die Vorhersage reagieren"
+          "enable_weather_lookahead": "Auf die Vorhersage reagieren",
+          "enable_excess_heat": "Kamin / überschüssige Wärme",
+          "excess_heat_margin_c": "Temperaturabstand für langsame Erwärmung"
         },
         "data_description": {
           "weather_entity": "Wird nur für die Sonnen- und Windvorhersage genutzt. Nicht nötig, wenn beides unten ausgeschaltet ist.",
           "nordpool_price_entity": "Ein Nordpool-Sensor mit den stündlichen Preisen für heute und morgen. Ohne ihn bewirkt die Preisersparnis nichts.",
-          "enable_solar_input": "Reduziert die Heizleistung etwas, wenn die Sonne das Haus aufwärmt. Nur einschalten, wenn dein Innensensor — oder, bei mehr als einem konfigurierten, ihr kombinierter Messwert — an einer Stelle sitzt, die die Sonne tatsächlich erreicht. Ein Sensor im Keller, in einem nach Norden ausgerichteten Raum oder im Flur bekommt den solaren Wärmegewinn nie mit — das würde die Temperatur für eine Erwärmung senken, die nichts, was du misst, bestätigen kann.",
+          "enable_solar_input": "Reduziert die Heizleistung etwas, wenn die Sonne das Haus aufwärmt. Nur einschalten, wenn dein Innensensor — oder, bei mehr als einem konfigurierten, ihr kombinierter Messwert — an einer Stelle sitzt, die die Sonne tatsächlich erreicht. Ein Sensor im Keller, in einem nach Norden ausgerichteten Raum oder im Flur bekommt den solaren Wärmegewinn nie mit — das würde die Temperatur für eine Erwärmung senken, die nichts, was du misst, bestätigen kann. Pausiert auch die Raumheizung bei gemessener solarer Überwärmung (nur Außentemperatursimulation), mit schneller und langsamer Auslösung.",
           "enable_wind_input": "Erhöht die Heizleistung etwas, wenn Wind dem Haus Wärme entzieht. Lass dies ausgeschaltet, außer du hast ein älteres, zugiges Haus, bei dem du bei starkem Wind spürbar auskühlende Räume bemerkst. Ein einigermaßen gut abgedichtetes Haus reagiert kaum auf Wind, und ein Ausgleich für einen nicht vorhandenen Effekt fügt nur Störrauschen hinzu.",
-          "enable_weather_lookahead": "Heizt schon etwas stärker, bevor eine Kaltfront oder auffrischender Wind tatsächlich eintrifft, statt zu warten, bis das Haus ausgekühlt ist. Bei Sonne ist es umgekehrt: Die Wärme wird zurückgehalten, bevor ein Schub Sonnenschein eintrifft, damit das Haus nicht überhitzt, sobald die Sonnenwärme selbst ankommt. Jeder Effekt klingt ab, sobald seine Änderung eintritt. Benötigt die Wettervorhersage-Entität oben."
+          "enable_weather_lookahead": "Heizt schon etwas stärker, bevor eine Kaltfront oder auffrischender Wind tatsächlich eintrifft, statt zu warten, bis das Haus ausgekühlt ist. Bei Sonne ist es umgekehrt: Die Wärme wird zurückgehalten, bevor ein Schub Sonnenschein eintrifft, damit das Haus nicht überhitzt, sobald die Sonnenwärme selbst ankommt. Jeder Effekt klingt ab, sobald seine Änderung eintritt. Benötigt die Wettervorhersage-Entität oben.",
+          "enable_excess_heat": "Raumheizung bei gemessener überschüssiger Wärme automatisch pausieren. Standardmäßig aus. Nur bei Außentemperatursimulation; die Heizgrenze der Pumpe muss unter 25°C liegen.",
+          "excess_heat_margin_c": "Grad über dem Sollwert für die langsame Auslösung nach 45 Minuten. Schnell: +1°C für 15 Minuten bei mindestens 1°C/Stunde Anstieg."
         }
       },
       "price": {
@@ -291,6 +297,9 @@
       },
       "vacation_mode": {
         "name": "Urlaubsmodus"
+      },
+      "excess_heat": {
+        "name": "Kamin / überschüssige Wärme"
       }
     },
     "select": {
