@@ -103,14 +103,18 @@
           "nordpool_price_entity": "Electricity price",
           "enable_solar_input": "Compensate for sunshine",
           "enable_wind_input": "Compensate for wind",
-          "enable_weather_lookahead": "Act on the forecast"
+          "enable_weather_lookahead": "Act on the forecast",
+          "enable_excess_heat": "Fireplace / excess heat",
+          "excess_heat_margin_c": "Excess heat slow-trigger margin"
         },
         "data_description": {
           "weather_entity": "Only used for the sun and wind forecast. Not needed if both are switched off below.",
           "nordpool_price_entity": "A Nordpool sensor with today's and tomorrow's hourly prices. Without one, price saving does nothing.",
-          "enable_solar_input": "Backs off a little when the sun is warming the house. Only switch this on if your indoor sensor — or, with more than one configured, their combined reading — is somewhere the sun actually reaches. A sensor in a basement, a north-facing room or a hallway never sees the solar gain, so this would push the temperature down for a warming nothing you measure can confirm.",
+          "enable_solar_input": "Backs off a little when the sun is warming the house. Only switch this on if your indoor sensor — or, with more than one configured, their combined reading — is somewhere the sun actually reaches. A sensor in a basement, a north-facing room or a hallway never sees the solar gain, so this would push the temperature down for a warming nothing you measure can confirm. Also pauses space heating during measured solar overheating (outdoor-spoof output only), using both fast and slow triggers.",
           "enable_wind_input": "Adds a little when wind is stripping heat out of the house. Leave this off unless you have an older, draughty house that you can feel getting colder in high wind. A reasonably sealed house barely responds to wind, and compensating for an effect that is not there just adds noise.",
-          "enable_weather_lookahead": "Starts heating a little harder before a cold front or a rising wind actually arrives, instead of waiting for the house to cool first. Sun works the other way: it holds heat back before a burst of sunshine arrives, so the house doesn't overheat once the sun's own warmth lands. Each fades out as its change lands. Needs the weather forecast entity above."
+          "enable_weather_lookahead": "Starts heating a little harder before a cold front or a rising wind actually arrives, instead of waiting for the house to cool first. Sun works the other way: it holds heat back before a burst of sunshine arrives, so the house doesn't overheat once the sun's own warmth lands. Each fades out as its change lands. Needs the weather forecast entity above.",
+          "enable_excess_heat": "Automatically pause space heating after measured excess warmth. Off by default. Outdoor-spoof output only; the pump must stop space heating below 25°C.",
+          "excess_heat_margin_c": "Degrees above the target for the 45-minute slow trigger. Fast trigger: +1°C for 15 minutes while rising at least 1°C/hour."
         }
       },
       "price": {
@@ -293,6 +297,9 @@
       },
       "vacation_mode": {
         "name": "Vacation mode"
+      },
+      "excess_heat": {
+        "name": "Fireplace / excess heat"
       }
     },
     "select": {

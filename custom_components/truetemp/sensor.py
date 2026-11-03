@@ -45,6 +45,7 @@ it costs no registry entry and no recorder row of its own.
 from __future__ import annotations
 
 from dataclasses import asdict
+import time
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -485,6 +486,14 @@ class StatusSensor(TrueTempEntity, SensorEntity):
             ),
         }
         if result is not None:
+            attrs["excess_heat_enabled"] = self.coordinator.excess_heat_enabled
+            attrs["excess_heat_supported"] = (
+                self.coordinator.output_mode == OUTPUT_MODE_OUTDOOR_SPOOF
+            )
+            attrs["excess_heat_drift_c_per_h"] = self.coordinator.excess_heat_state.drift_c_per_h
+            attrs["excess_heat_learning_frozen"] = (
+                self.coordinator.excess_heat_state.learning_frozen(time.monotonic())
+            )
             attrs["indoor_sensor_ok"] = result.indoor_data_available
             attrs["indoor_sensor_count"] = {
                 "usable": len(self.coordinator.indoor_sensor_readings),

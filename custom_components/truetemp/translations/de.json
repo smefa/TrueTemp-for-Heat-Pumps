@@ -103,14 +103,18 @@
           "nordpool_price_entity": "Strompreis",
           "enable_solar_input": "Sonneneinstrahlung ausgleichen",
           "enable_wind_input": "Wind ausgleichen",
-          "enable_weather_lookahead": "Auf die Vorhersage reagieren"
+          "enable_weather_lookahead": "Auf die Vorhersage reagieren",
+          "enable_excess_heat": "Kamin / überschüssige Wärme",
+          "excess_heat_margin_c": "Temperaturabstand für langsame Erwärmung"
         },
         "data_description": {
           "weather_entity": "Wird nur für die Sonnen- und Windvorhersage genutzt. Nicht nötig, wenn beides unten ausgeschaltet ist.",
           "nordpool_price_entity": "Ein Nordpool-Sensor mit den stündlichen Preisen für heute und morgen. Ohne ihn bewirkt die Preisersparnis nichts.",
-          "enable_solar_input": "Reduziert die Heizleistung etwas, wenn die Sonne das Haus aufwärmt. Nur einschalten, wenn dein Innensensor — oder, bei mehr als einem konfigurierten, ihr kombinierter Messwert — an einer Stelle sitzt, die die Sonne tatsächlich erreicht. Ein Sensor im Keller, in einem nach Norden ausgerichteten Raum oder im Flur bekommt den solaren Wärmegewinn nie mit — das würde die Temperatur für eine Erwärmung senken, die nichts, was du misst, bestätigen kann.",
+          "enable_solar_input": "Reduziert die Heizleistung etwas, wenn die Sonne das Haus aufwärmt. Nur einschalten, wenn dein Innensensor — oder, bei mehr als einem konfigurierten, ihr kombinierter Messwert — an einer Stelle sitzt, die die Sonne tatsächlich erreicht. Ein Sensor im Keller, in einem nach Norden ausgerichteten Raum oder im Flur bekommt den solaren Wärmegewinn nie mit — das würde die Temperatur für eine Erwärmung senken, die nichts, was du misst, bestätigen kann. Pausiert auch die Raumheizung bei gemessener solarer Überwärmung (nur Außentemperatursimulation), mit schneller und langsamer Auslösung.",
           "enable_wind_input": "Erhöht die Heizleistung etwas, wenn Wind dem Haus Wärme entzieht. Lass dies ausgeschaltet, außer du hast ein älteres, zugiges Haus, bei dem du bei starkem Wind spürbar auskühlende Räume bemerkst. Ein einigermaßen gut abgedichtetes Haus reagiert kaum auf Wind, und ein Ausgleich für einen nicht vorhandenen Effekt fügt nur Störrauschen hinzu.",
-          "enable_weather_lookahead": "Heizt schon etwas stärker, bevor eine Kaltfront oder auffrischender Wind tatsächlich eintrifft, statt zu warten, bis das Haus ausgekühlt ist. Bei Sonne ist es umgekehrt: Die Wärme wird zurückgehalten, bevor ein Schub Sonnenschein eintrifft, damit das Haus nicht überhitzt, sobald die Sonnenwärme selbst ankommt. Jeder Effekt klingt ab, sobald seine Änderung eintritt. Benötigt die Wettervorhersage-Entität oben."
+          "enable_weather_lookahead": "Heizt schon etwas stärker, bevor eine Kaltfront oder auffrischender Wind tatsächlich eintrifft, statt zu warten, bis das Haus ausgekühlt ist. Bei Sonne ist es umgekehrt: Die Wärme wird zurückgehalten, bevor ein Schub Sonnenschein eintrifft, damit das Haus nicht überhitzt, sobald die Sonnenwärme selbst ankommt. Jeder Effekt klingt ab, sobald seine Änderung eintritt. Benötigt die Wettervorhersage-Entität oben.",
+          "enable_excess_heat": "Raumheizung bei gemessener überschüssiger Wärme automatisch pausieren. Standardmäßig aus. Nur bei Außentemperatursimulation; die Heizgrenze der Pumpe muss unter 25°C liegen.",
+          "excess_heat_margin_c": "Grad über dem Sollwert für die langsame Auslösung nach 45 Minuten. Schnell: +1°C für 15 Minuten bei mindestens 1°C/Stunde Anstieg."
         }
       },
       "price": {
@@ -293,6 +297,9 @@
       },
       "vacation_mode": {
         "name": "Urlaubsmodus"
+      },
+      "excess_heat": {
+        "name": "Kamin / überschüssige Wärme"
       }
     },
     "select": {

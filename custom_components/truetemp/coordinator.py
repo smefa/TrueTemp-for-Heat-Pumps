@@ -27,7 +27,7 @@ import math
 import time
 from collections import deque
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 
 import aiohttp
@@ -63,7 +63,16 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from homeassistant.util import dt as dt_util
 from homeassistant.util.unit_conversion import SpeedConverter, TemperatureConverter
 
+from .excess_heat import (
+    ExcessHeatState,
+    advance as advance_excess_heat,
+    source_lost as excess_heat_source_lost,
+)
 from .const import (
+    CONF_ENABLE_EXCESS_HEAT,
+    CONF_EXCESS_HEAT_MARGIN_C,
+    DEFAULT_ENABLE_EXCESS_HEAT,
+    DEFAULT_EXCESS_HEAT_MARGIN_C,
     CURVE_LIMIT_ERROR_C,
     CURVE_LIMIT_MARGIN_C,
     CURVE_LIMIT_MESSAGE_MAX,
@@ -527,6 +536,7 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
         self._target_recovery = TargetRecovery(self.indoor_target_c)
         self._manual_target_adjustment_c = 0.0
         self._manual_recovery_since_learning = False
+        self.excess_heat_state = ExcessHeatState()
 
         # The exact price forecast this cycle's decision used, stashed for the
         # data logger — forecasts get revised, so realised prices are not a
@@ -860,6 +870,7 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
         side: str | None = None
         if (
             self.is_active
+            and not self.excess_heat_state.learning_frozen(time.monotonic())
             and learner is not None
             and indoor_ok
             and indoor_temp_c is not None
@@ -1408,7 +1419,10 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
             # A composition change makes the aggregate take a step that is not
             # a real temperature change — drop the lag buffer exactly like an
             # unavailable reading does, via the same `indoor_c=None` path.
-            lag_indoor_c = None if indoor_sensor_set_changed else indoor_temp_c
+            lag_indoor_c = (
+                None if indoor_sensor_set_changed
+                or self.excess_heat_state.learning_frozen(now) else indoor_temp_c
+            )
             self.lag_state = lag_push(
                 self.lag_state,
                 self.learner_state.prev_offset_c,
@@ -1448,6 +1462,7 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
                         or (previous and previous.manual_target_adjustment_c)
                     ),
                     rise_hours=self.lag_result.rise_hours,
+                    excess_heat=self.excess_heat_state.learning_frozen(now),
                     estimated_solar_gain_c=estimated_solar_gain_c,
                     indoor_sensor_set_changed=indoor_sensor_set_changed,
                 ),
@@ -1678,6 +1693,9 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
                 severity=ir.IssueSeverity.ERROR,
                 entity_id=_entry_value(self.entry, CONF_OUTDOOR_TEMP_SENSOR, None),
             )
+            self.excess_heat_state = excess_heat_source_lost(
+                self.excess_heat_state, time.monotonic(), self._lag_result().rise_hours,
+            )
             await self._async_ohmonwifi_relay_failsafe(sensor_ok=False)
             raise
         self._sync_source_issue(
@@ -1903,21 +1921,6 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
         self._manual_target_adjustment_c = manual_adjustment_c * SPOOF_PER_INDOOR_C
         self._manual_recovery_since_learning |= self._manual_target_adjustment_c != 0.0
 
-        # Learning advances on its own clock; republishing happens every time.
-        self._learner_stepped = self._due_for_learner_step() and self._advance_learning(
-            indoor_temp_c,
-            indoor_ok,
-            indoor_contributing,
-            raw_outdoor_temp_c,
-            sun_elevation_deg,
-            sun_azimuth_deg,
-            cloud_coverage_pct,
-        )
-
-        self._sync_curve_limit_notification(
-            self.learner_result, indoor_temp_c, indoor_ok
-        )
-
         lag = self._lag_result()
         learner = self.learner_result
         offset_c = learner.offset_c if learner else 0.0
@@ -1939,37 +1942,63 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
             indoor_ok,
         )
 
-        result = compute(
-            HeuristicInputs(
-                indoor_temp_c=indoor_temp_c,
-                indoor_data_available=indoor_ok,
-                raw_outdoor_temp_c=raw_outdoor_temp_c,
-                wind_speed_ms=wind_speed_ms,
-                wind_data_available=wind_ok,
-                sun_elevation_deg=sun_elevation_deg,
-                sun_azimuth_deg=sun_azimuth_deg,
-                cloud_coverage_pct=cloud_coverage_pct,
-                cloud_data_available=cloud_ok,
-                current_price=current_price,
-                price_data_available=price_ok,
-                price_forecast=price_forecast,
-                outdoor_forecast=forecast_read.outdoor_series,
-                wind_forecast_ms=forecast_read.wind_series,
-                solar_forecast=forecast_read.solar_series,
-                sun_precool_hold_c=sun_hold_c,
-                learned_offset_c=offset_c,
-                fall_minutes=lag.fall_minutes,
-                rise_minutes=lag.rise_minutes,
-                recoverable_sag_c=recoverable,
-                price_significance_factor=price_significance_factor,
-                today_price_spread_c=today_spread,
-                seasonal_reference_spread_c=seasonal_reference_spread_c,
-                prev_heating_hard_limit_engaged=bool(
-                    self.data and self.data.heating_hard_limit_engaged
-                ),
+        inputs = HeuristicInputs(
+            indoor_temp_c=indoor_temp_c,
+            indoor_data_available=indoor_ok,
+            raw_outdoor_temp_c=raw_outdoor_temp_c,
+            wind_speed_ms=wind_speed_ms,
+            wind_data_available=wind_ok,
+            sun_elevation_deg=sun_elevation_deg,
+            sun_azimuth_deg=sun_azimuth_deg,
+            cloud_coverage_pct=cloud_coverage_pct,
+            cloud_data_available=cloud_ok,
+            current_price=current_price,
+            price_data_available=price_ok,
+            price_forecast=price_forecast,
+            outdoor_forecast=forecast_read.outdoor_series,
+            wind_forecast_ms=forecast_read.wind_series,
+            solar_forecast=forecast_read.solar_series,
+            sun_precool_hold_c=sun_hold_c,
+            learned_offset_c=offset_c,
+            fall_minutes=lag.fall_minutes,
+            rise_minutes=lag.rise_minutes,
+            recoverable_sag_c=recoverable,
+            price_significance_factor=price_significance_factor,
+            today_price_spread_c=today_spread,
+            seasonal_reference_spread_c=seasonal_reference_spread_c,
+            prev_heating_hard_limit_engaged=bool(
+                self.data and self.data.heating_hard_limit_engaged
             ),
-            self._params(),
         )
+        preview = compute(inputs, self._params())
+        self._advance_excess_heat(preview, indoor_contributing)
+
+        # Learning advances on its own clock; republishing happens every time.
+        self._learner_stepped = self._due_for_learner_step() and self._advance_learning(
+            indoor_temp_c,
+            indoor_ok,
+            indoor_contributing,
+            raw_outdoor_temp_c,
+            sun_elevation_deg,
+            sun_azimuth_deg,
+            cloud_coverage_pct,
+        )
+
+        self._sync_curve_limit_notification(
+            self.learner_result, indoor_temp_c, indoor_ok
+        )
+
+        learner = self.learner_result
+        lag = self._lag_result()
+        offset_c = learner.offset_c if learner else 0.0
+        result = compute(replace(
+            inputs, learned_offset_c=offset_c,
+            fall_minutes=lag.fall_minutes, rise_minutes=lag.rise_minutes,
+            recoverable_sag_c=(recoverable_sag_c(
+                learner.close_rate_c_per_h, lag.rise_hours * TAU_I_LAG_MULTIPLE,
+            ) if learner else 0.0),
+            excess_heat_source=self.excess_heat_state.source,
+        ), self._params())
 
         # A real side effect when configured, but it never affects `result`.
         await self._async_push_output(result)
@@ -1978,6 +2007,62 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
             await self._log_data_point(result)
 
         return result
+
+    def _advance_excess_heat(
+        self, preview: HeuristicResult, contributing: frozenset[str],
+    ) -> None:
+        """Detect before learning, using this cycle's deliberate-heat decisions."""
+        now = time.monotonic()
+        max_age = float(_entry_value(self.entry, CONF_INDOOR_SENSOR_MAX_AGE_HOURS, 0) or 4)
+        ready = len(contributing) == self.indoor_sensor_total_configured
+        for entity_id in contributing:
+            sensor = self.hass.states.get(entity_id)
+            last_seen = (
+                getattr(sensor, "last_reported", None) or sensor.last_updated
+            ) if sensor is not None else None
+            if last_seen is None or dt_util.utcnow() - last_seen > timedelta(hours=max_age):
+                ready = False
+        supported = self.output_mode == OUTPUT_MODE_OUTDOOR_SPOOF
+        solar_gain = SOLAR_GAIN_C * preview.solar_effect if preview.cloud_data_available else 0.0
+        ahead = [v * SOLAR_GAIN_C for t, v in self._last_solar_forecast or () if 0 < t <= 1]
+        # A falling live solar signal is also useful without an hourly forecast.
+        reference_s, previous_gain = getattr(self, "_excess_solar_reference", (now, solar_gain))
+        falling = solar_gain < previous_gain - 0.01 or bool(ahead and max(ahead) < solar_gain)
+        if not hasattr(self, "_excess_solar_reference") or now - reference_s >= 15 * 60:
+            self._excess_solar_reference = (now, solar_gain)
+        excluded = bool(
+            not self.is_active or not supported
+            or preview.heating_hard_limit_engaged
+            or preview.precharge_active or preview.price_catchup_c < 0
+            or preview.weather_preramp_active
+            or self.vacation_result.phase in VACATION_ACTIVE_PHASES
+            or self._manual_target_adjustment_c
+        )
+        self.excess_heat_state = advance_excess_heat(
+            self.excess_heat_state, now_s=now,
+            indoor_c=min(self.indoor_sensor_readings.values(), default=None),
+            target_c=self._effective_target_c, sensors=contributing,
+            available=ready and preview.indoor_data_available,
+            fireplace_enabled=self.excess_heat_enabled,
+            solar_enabled=self.solar_input_enabled and preview.cloud_data_available,
+            solar_gain_c=solar_gain, solar_falling=falling, excluded=excluded,
+            rise_hours=self._lag_result().rise_hours,
+            margin_c=float(_entry_value(
+                self.entry, CONF_EXCESS_HEAT_MARGIN_C, DEFAULT_EXCESS_HEAT_MARGIN_C,
+            )),
+        )
+        if self.excess_heat_state.holdoff_until_s > now:
+            self.learner_state = replace(
+                self.learner_state,
+                holdoff_until_s=max(
+                    self.learner_state.holdoff_until_s or 0.0,
+                    self.excess_heat_state.holdoff_until_s,
+                ),
+            )
+
+    @property
+    def excess_heat_enabled(self) -> bool:
+        return bool(_entry_value(self.entry, CONF_ENABLE_EXCESS_HEAT, DEFAULT_ENABLE_EXCESS_HEAT))
 
     # --- Sun pre-cool hold ---------------------------------------------------
 
@@ -2558,6 +2643,9 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
             "sun_precool_c": result.sun_precool_c,
             "sun_precool_active": result.sun_precool_active,
             "heating_hard_limit_engaged": result.heating_hard_limit_engaged,
+            "excess_heat_source": result.excess_heat_source,
+            "excess_heat_drift_c_per_h": self.excess_heat_state.drift_c_per_h,
+            "excess_heat_learning_frozen": self.excess_heat_state.learning_frozen(time.monotonic()),
             "lead_minutes_effective": result.lead_minutes_effective,
         }
         if learner is not None:

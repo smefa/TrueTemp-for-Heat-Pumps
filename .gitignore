@@ -12,6 +12,7 @@ venv/
 CLAUDE.md
 AGENTS.md
 .agents/
+docs/deploy.md
 .claude/
 docs/plan*
 docs/audit*

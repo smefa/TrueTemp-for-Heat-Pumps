@@ -344,6 +344,63 @@ being held *below* target this time.
 
 ---
 
+### Fireplace and solar excess heat
+
+In outdoor-temperature spoof mode, TrueTemp can temporarily publish **25 °C**
+to request a space-heating stop when measured indoor warmth exceeds the normal
+controller's correction range. Check that the pump's own space-heating stop
+temperature is below 25 °C before testing. This does not control hot water.
+Heat-curve-offset and indoor-climate outputs do not support this pause: their
+available adjustments cannot guarantee a stop. The status attribute
+`excess_heat_supported` reports whether the selected output supports it.
+
+The new **Fireplace / excess heat** switch is off by default. The existing
+**Solar** setting also enables solar pauses, with no separate solar-pause switch.
+Both use the same measured triggers, using the **coldest** configured indoor
+sensor regardless of the normal aggregation setting:
+
+- Slow: at least 1.5 °C above target continuously for 45 minutes. The margin is
+  adjustable under Sources (1–4 °C).
+- Fast: rising at least 1 °C/hour and at least 1 °C above target continuously
+  for 15 minutes. A fast rise freezes learning immediately, even below target.
+
+The rise rate compares the current reading with the nearest retained reading
+at least 15 minutes old, at most 30 minutes old. Rate history keeps at most one
+reading per minute. Gaps over 20 minutes reset evidence. Every configured
+sensor must be available and fresh; the configured indoor maximum age applies,
+with a four-hour fallback when that check is disabled. A flat but reporting
+sensor remains valid. Sensor composition or target changes reset evidence and
+release a pause. Pauses are not restored after restart.
+
+Solar eligibility requires enabled Solar, an available cloud forecast and at
+least 0.3 °C of current modelled solar gain. This lower threshold replaces the
+unvalidated 2 °C proposal, which missed morning warmth in the reporter's log.
+Solar gets priority when both sources qualify; the source which starts a pause
+keeps its release rule. These labels describe control reasons, not proof of a fire.
+
+A fireplace pause releases at target +0.5 °C. A solar pause releases at target
++1 °C while the live solar signal or next-hour forecast is falling, or whenever
+modelled gain disappears (at most 0.05 °C), the solar forecast becomes unavailable,
+or Solar is disabled. Solar also releases unconditionally at target +0.5 °C so
+a sunny forecast cannot keep heating paused after the rooms cool.
+Disabling the fireplace switch releases its pause.
+Missing or stale indoor data also releases immediately. The pause output is
+applied without a ramp and is separate from the summer cutoff's hysteresis.
+
+Price precharge/catch-up, weather pre-ramp, vacation recovery and manual target
+recovery cannot start a pause. Learning and response-event collection freeze
+during fast rises and pauses, then remain frozen for one measured heating rise
+time after release or the end of an unpaused fast rise. Learned offsets and
+capacity evidence are preserved; the ordinary transient correction resumes
+after release. Curve-limit notices are suppressed during this freeze.
+The heating response calculation itself is unchanged.
+
+The status sensor, dashboard card and optional data log report
+`excess_heat_source` (`fireplace`, `solar`, or null). Status and logs also include
+`excess_heat_drift_c_per_h` and `excess_heat_learning_frozen`.
+Observed diagnostics support detection, but actual pump shutdown and comfort
+after resuming still require a real-house test.
+
 ## Saving money on electricity
 
 Optional, and off until you give it a price sensor. Two controls, both on the

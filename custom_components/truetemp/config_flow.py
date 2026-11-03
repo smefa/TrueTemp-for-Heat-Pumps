@@ -41,6 +41,10 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.util import dt as dt_util
 
 from .const import (
+    CONF_ENABLE_EXCESS_HEAT,
+    CONF_EXCESS_HEAT_MARGIN_C,
+    DEFAULT_ENABLE_EXCESS_HEAT,
+    DEFAULT_EXCESS_HEAT_MARGIN_C,
     CONFIG_ENTRY_VERSION,
     CONF_COMFORT_MIN_C,
     CONF_ENABLE_DATA_LOGGING,
@@ -552,6 +556,19 @@ class TrueTempOptionsFlow(config_entries.OptionsFlow):
                             CONF_ENABLE_SOLAR_INPUT, DEFAULT_ENABLE_SOLAR_INPUT
                         ),
                     ): selector.BooleanSelector(),
+                    vol.Required(
+                        CONF_ENABLE_EXCESS_HEAT,
+                        default=current.get(CONF_ENABLE_EXCESS_HEAT, DEFAULT_ENABLE_EXCESS_HEAT),
+                    ): selector.BooleanSelector(),
+                    vol.Required(
+                        CONF_EXCESS_HEAT_MARGIN_C,
+                        default=current.get(
+                            CONF_EXCESS_HEAT_MARGIN_C, DEFAULT_EXCESS_HEAT_MARGIN_C,
+                        ),
+                    ): selector.NumberSelector(selector.NumberSelectorConfig(
+                        min=1.0, max=4.0, step=0.1, unit_of_measurement="°C",
+                        mode=selector.NumberSelectorMode.BOX,
+                    )),
                     vol.Required(
                         CONF_ENABLE_WIND_INPUT,
                         default=current.get(

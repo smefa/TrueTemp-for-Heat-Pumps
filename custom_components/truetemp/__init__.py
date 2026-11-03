@@ -14,7 +14,7 @@ from homeassistant.helpers.event import async_track_state_change_event
 
 from .const import (
     CONFIG_ENTRY_VERSION,
-    DATA_VACATION_SKIP_RELOAD,
+    DATA_LIVE_OPTIONS_SKIP_RELOAD,
     DOMAIN,
     FRONTEND_CARD_URL,
     FRONTEND_DASHBOARD_JS_VERSION,
@@ -230,25 +230,26 @@ async def async_unload_entry(hass: HomeAssistant, entry: TrueTempConfigEntry) ->
     # Otherwise a flag set just before this unload (a vacation service call
     # racing a reload/removal) would sit in hass.data and be consumed by a
     # future entry that happens to reuse this entry_id's slot.
-    skip_reload = hass.data.get(DATA_VACATION_SKIP_RELOAD)
+    skip_reload = hass.data.get(DATA_LIVE_OPTIONS_SKIP_RELOAD)
     if skip_reload:
         skip_reload.discard(entry.entry_id)
     return unloaded
 
 
 async def _async_update_listener(hass: HomeAssistant, entry: TrueTempConfigEntry) -> None:
+    # Vacation services and the excess-heat switch write live-read options.
     # A vacation_plan_set/_remove/_reorder service call (services.py) writes
     # entry.options the same way the options flow does, which normally means
     # a full unload/re-setup here — that briefly removes every TrueTemp
     # entity from the state machine, which is what made the vacation card go
     # blank for a few seconds on every plan add/edit/delete. But the plan
-    # list is the one option TrueTempCoordinator.vacation_plans already
+    # list (like the excess-heat toggle) is an option the coordinator already
     # re-reads live from entry.options on each refresh (see its docstring),
-    # so for that one key a plain refresh is enough — no reload, no entity
+    # so for these keys a plain refresh is enough — no reload, no entity
     # teardown. services.py flags the entry here right before its write;
     # any other options change (the options flow, a future setting) leaves
     # the flag unset and falls through to the normal reload.
-    skip_reload = hass.data.get(DATA_VACATION_SKIP_RELOAD)
+    skip_reload = hass.data.get(DATA_LIVE_OPTIONS_SKIP_RELOAD)
     if skip_reload and entry.entry_id in skip_reload:
         skip_reload.discard(entry.entry_id)
         await entry.runtime_data.async_request_refresh()

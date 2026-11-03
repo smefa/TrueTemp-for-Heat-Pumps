@@ -25,6 +25,20 @@ HeuristicParams = heuristic.HeuristicParams
 compute = heuristic.compute
 
 
+@pytest.mark.parametrize("source", ["fireplace", "solar"])
+def test_excess_heat_output_is_immediate_and_separate_from_summer_latch(source):
+    result = compute(make_inputs(excess_heat_source=source, learned_offset_c=-5.0), make_params())
+    assert result.compensated_outdoor_temp_c == 25.0
+    assert result.learned_offset_c == -5.0
+    assert result.excess_heat_source == source
+    assert not result.heating_hard_limit_engaged
+    resumed = compute(
+        make_inputs(prev_heating_hard_limit_engaged=result.heating_hard_limit_engaged),
+        make_params(),
+    )
+    assert resumed.compensated_outdoor_temp_c < 25.0
+
+
 class TestManualTargetRecovery:
     @pytest.mark.parametrize("adjustment", [-1.0, 1.0])
     def test_manual_adjustment_composes_with_learned_offset(self, adjustment):

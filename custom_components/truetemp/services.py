@@ -41,7 +41,7 @@ from homeassistant.helpers import config_validation as cv
 
 import homeassistant.util.dt as dt_util
 
-from .const import CONF_VACATION_PLANS, DATA_VACATION_SKIP_RELOAD, DOMAIN
+from .const import CONF_VACATION_PLANS, DATA_LIVE_OPTIONS_SKIP_RELOAD, DOMAIN
 from .vacation import (
     RECURRENCE_ONCE,
     RECURRENCE_WEEKLY,
@@ -120,7 +120,7 @@ def _resolve_entry(hass: HomeAssistant, config_entry_id: str):
 def _update_plans(hass: HomeAssistant, entry, plans: list[VacationPlan]) -> None:
     """Write the plan list, flagged so __init__.py's update listener does a
     plain coordinator refresh instead of its usual full reload — see
-    DATA_VACATION_SKIP_RELOAD. Every write in this module goes through here
+    DATA_LIVE_OPTIONS_SKIP_RELOAD. Every write in this module goes through here
     so no call site can forget the flag and reintroduce the card's blank-for-
     a-few-seconds reload flicker.
 
@@ -133,7 +133,7 @@ def _update_plans(hass: HomeAssistant, entry, plans: list[VacationPlan]) -> None
         entry, options={**entry.options, CONF_VACATION_PLANS: serialize_plans(plans)}
     )
     if changed:
-        hass.data.setdefault(DATA_VACATION_SKIP_RELOAD, set()).add(entry.entry_id)
+        hass.data.setdefault(DATA_LIVE_OPTIONS_SKIP_RELOAD, set()).add(entry.entry_id)
 
 
 def _plan_from_service_data(data: dict[str, Any]) -> VacationPlan:

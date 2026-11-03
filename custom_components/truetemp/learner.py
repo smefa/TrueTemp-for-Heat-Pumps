@@ -425,6 +425,7 @@ class LearnerInputs:
     # site is unaffected.
     vacation_feedforward: bool = False
     manual_target_recovery: bool = False
+    excess_heat: bool = False
     # True when the set of contributing indoor sensors differs from last
     # cycle (a sensor joined or dropped out of the aggregate). The aggregate
     # value took a step that is not a real temperature change, so the
@@ -604,6 +605,8 @@ def _freeze_reason(inputs: LearnerInputs, state: LearnerState) -> str | None:
         return "indoor sensor unavailable"
     if inputs.indoor_sensor_set_changed:
         return "the set of contributing indoor sensors changed"
+    if inputs.excess_heat:
+        return "excess heat warm-up, pause or recovery"
     if inputs.heating_hard_limit_engaged:
         return "heating hard limit engaged, output is forced rather than learned"
     if inputs.price_braking:
@@ -691,6 +694,8 @@ def _observe_baseline(
     """
     if not inputs.indoor_data_available or inputs.indoor_temp_c is None:
         return baseline_bins, "indoor sensor unavailable"
+    if inputs.excess_heat:
+        return baseline_bins, "excess heat warm-up, pause or recovery"
     if inputs.heating_hard_limit_engaged:
         # This far above the hard limit the raw curve is not heating either,
         # so where the house sits is free-floating (solar, venting, an AC

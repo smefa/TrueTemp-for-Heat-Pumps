@@ -975,6 +975,7 @@ class HeuristicInputs:
     # coordinator the same way `previous.price_braking` is; see that field's
     # docstring in coordinator.py.
     prev_heating_hard_limit_engaged: bool = False
+    excess_heat_source: str | None = None
 
 
 @dataclass(frozen=True)
@@ -1115,6 +1116,7 @@ class HeuristicResult:
     vacation_catchup_active: bool = False
     manual_target_adjustment_c: float = 0.0
     model_version: str = MODEL_VERSION
+    excess_heat_source: str | None = None
     # See `HeuristicParams.user_indoor_target_c`.
     user_indoor_target_c: float = 0.0
 
@@ -1128,9 +1130,10 @@ def compute(inputs: HeuristicInputs, params: HeuristicParams) -> HeuristicResult
         inputs.sun_elevation_deg, inputs.sun_azimuth_deg, inputs.cloud_coverage_pct
     )
 
-    if resolve_heating_hard_limit_engaged(
+    hard_limit = resolve_heating_hard_limit_engaged(
         inputs.raw_outdoor_temp_c, inputs.prev_heating_hard_limit_engaged
-    ):
+    )
+    if hard_limit or inputs.excess_heat_source:
         # Hard limit: force the published value to the system's warmest
         # possible reading rather than merely passing raw through, so no
         # combination of learned offset, wind, sun or price can still leave
@@ -1162,7 +1165,8 @@ def compute(inputs: HeuristicInputs, params: HeuristicParams) -> HeuristicResult
             current_price=inputs.current_price if inputs.price_data_available else None,
             price_shift_applied_c=0.0,
             price_data_available=inputs.price_data_available,
-            heating_hard_limit_engaged=True,
+            heating_hard_limit_engaged=hard_limit,
+            excess_heat_source=inputs.excess_heat_source,
             price_comfort_tier=params.price_comfort_tier,
             cold_caution=params.cold_caution,
             # Also informational and also unaffected by the hard limit, same as
@@ -1171,6 +1175,9 @@ def compute(inputs: HeuristicInputs, params: HeuristicParams) -> HeuristicResult
             today_price_spread_c=inputs.today_price_spread_c,
             seasonal_reference_spread_c=inputs.seasonal_reference_spread_c,
             reason=(
+                f"Excess heat pause ({inputs.excess_heat_source}); publishing "
+                f"{OUTPUT_SANITY_MAX_C:.1f}°C to request space-heating stop"
+            ) if inputs.excess_heat_source else (
                 f"Raw outdoor {inputs.raw_outdoor_temp_c:.1f}°C at or above the "
                 f"{HEATING_HARD_LIMIT_C:.1f}°C hard limit; publishing "
                 f"{OUTPUT_SANITY_MAX_C:.1f}°C to guarantee no heat call"

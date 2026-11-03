@@ -15,11 +15,11 @@ an entity to write, or a genuine occupant preference.
 
 DOMAIN = "truetemp"
 
-# hass.data key: a set of entry_ids whose *next* options update was written by
-# services.py's vacation_plan_set/_remove/_reorder rather than the options
-# flow. __init__.py's update listener checks this to skip the usual full
+# hass.data key: entry_ids whose next options update changes live-read keys
+# (vacation services or the excess-heat switch), rather than the options flow.
+# __init__.py's update listener checks this to skip the usual full
 # entry reload for those writes — see its own comment for why that's safe.
-DATA_VACATION_SKIP_RELOAD = f"{DOMAIN}_vacation_skip_reload"
+DATA_LIVE_OPTIONS_SKIP_RELOAD = f"{DOMAIN}_live_options_skip_reload"
 
 # --- Config / options keys: sources to read -------------------------------
 CONF_INDOOR_TEMP_SENSOR = "indoor_temp_sensor"
@@ -131,6 +131,8 @@ CONF_PRICE_SIGNIFICANCE_FLOOR = "price_significance_floor"
 # switches its term off entirely rather than relying on a zeroed coefficient.
 # With both off, no weather entity is needed at all.
 CONF_ENABLE_SOLAR_INPUT = "enable_solar_input"
+CONF_ENABLE_EXCESS_HEAT = "enable_excess_heat"
+CONF_EXCESS_HEAT_MARGIN_C = "excess_heat_margin_c"
 CONF_ENABLE_WIND_INPUT = "enable_wind_input"
 # Whether to act on the weather forecast — outdoor temperature and wind
 # pre-ramp ahead of a cold front the way price compensation already acts
@@ -148,7 +150,7 @@ CONF_ENABLE_DATA_LOGGING = "enable_data_logging"
 # The vacation plan list (see docs/plan_vacation_plans.md), a list of
 # vacation.serialize_plan()-shaped dicts. Written either through the options
 # flow's "vacation" pages (config_flow.py) or, for the dashboard card,
-# services.py's vacation_plan_set/_remove/_reorder — see DATA_VACATION_SKIP_RELOAD
+# services.py's vacation_plan_set/_remove/_reorder — see DATA_LIVE_OPTIONS_SKIP_RELOAD
 # for why the latter path doesn't reload the entry the way an options-flow
 # save does.
 CONF_VACATION_PLANS = "vacation_plans"
@@ -191,6 +193,8 @@ KNOWN_CONFIG_KEYS = frozenset(
         CONF_COMFORT_MIN_C,
         CONF_PRICE_SIGNIFICANCE_FLOOR,
         CONF_ENABLE_SOLAR_INPUT,
+        CONF_ENABLE_EXCESS_HEAT,
+        CONF_EXCESS_HEAT_MARGIN_C,
         CONF_ENABLE_WIND_INPUT,
         CONF_ENABLE_WEATHER_LOOKAHEAD,
         CONF_ENABLE_DATA_LOGGING,
@@ -213,6 +217,8 @@ DEFAULT_COMFORT_MIN_C = 18.0
 # the auto value actually computes and its own honestly-stated limitation.
 DEFAULT_PRICE_SIGNIFICANCE_FLOOR = 0.0
 DEFAULT_ENABLE_SOLAR_INPUT = True
+DEFAULT_ENABLE_EXCESS_HEAT = False
+DEFAULT_EXCESS_HEAT_MARGIN_C = 1.5
 DEFAULT_ENABLE_WIND_INPUT = False
 # Off, for the same reason compensation itself ships off: an upgrade must not
 # silently change what an existing install publishes.
@@ -237,7 +243,8 @@ CURVE_LIMIT_MARGIN_C = 0.05
 CURVE_LIMIT_ERROR_C = 0.3
 CURVE_LIMIT_TITLE = "TrueTemp: heat pump curve needs adjusting"
 _CURVE_LIMIT_ADVICE = (
-    "\n\nThe heat pump's own heating curve seems to be set incorrectly. "
+    "\n\nCheck for other heat sources (sun or a fireplace) before changing "
+    "the curve. The heat pump's own heating curve may need adjustment. "
     "Please review and adjust it, so TrueTemp can work closer to zero offset "
     "again.\n\nThis notice clears itself when the offset is back within its "
     "normal range."
@@ -250,7 +257,10 @@ CURVE_LIMIT_MESSAGE_MAX = (
 CURVE_LIMIT_MESSAGE_MIN = (
     "TrueTemp has been at its minimum offset ({offset:.1f}°C) for {hours} "
     "hours, and the house is still warmer than the target ({current:.1f}°C, "
-    "target {target:.1f}°C)." + _CURVE_LIMIT_ADVICE
+    "target {target:.1f}°C). If a fireplace is warming the house, enable "
+    "'Fireplace / excess heat'. For warmth from sunshine, enable Solar. "
+    "Both features can pause heating."
+    + _CURVE_LIMIT_ADVICE
 )
 
 # The controller runs on a fixed cadence rather than a configurable one. The
@@ -286,7 +296,7 @@ STARTUP_GRACE_PERIOD_MINUTES = 5
 # changes — the main file or any of the language files.
 FRONTEND_STATIC_URL_PREFIX = "/truetemp"
 FRONTEND_CARD_URL = f"{FRONTEND_STATIC_URL_PREFIX}/truetemp-card.js"
-FRONTEND_JS_VERSION = "29"
+FRONTEND_JS_VERSION = "30"
 
 # The vacation-plans card is a second, independent bundle (see
 # www/truetemp-vacation-card.js's module docstring for why) with its own
