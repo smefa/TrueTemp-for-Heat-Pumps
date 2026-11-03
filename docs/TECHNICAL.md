@@ -520,10 +520,15 @@ plan":
 `truetemp.reset_learning` (`config_entry_id`) is separate and deliberately has
 no card or entity: run it from Developer Tools → Actions after replacing the
 outdoor or indoor sensor. It resets the offset table and the lag buffer to a
-cold start and saves immediately; the price-spread history is kept.
+cold start with all bands and the shared learned offset at 0 C, and saves
+immediately; the price-spread history is kept. Normal learning and transient
+adjustments can move the recommended output away from zero after the reset.
 With `current_band_only: true` it resets only the band the outdoor temperature
 is in now (`prev_bin_index`), together with that band's open-loop baseline; other
-bands, the shared offset and the lag buffer stay.
+bands, the shared offset and the lag buffer stay. The reset band starts at a
+combined learned offset of 0 C at its centre, cancelling its share of the shared
+offset instead of inheriting neighbouring bands. Normal blending between band
+centres still applies, and learning resumes from that starting point.
 
 `vacation_plan_set` runs the same overlap check as the options flow and
 raises a translated `ServiceValidationError` (readable in the Developer

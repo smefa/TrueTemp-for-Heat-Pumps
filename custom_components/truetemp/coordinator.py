@@ -1623,7 +1623,7 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
         await self.async_request_refresh()
 
     async def async_reset_current_band(self) -> int:
-        """Forget what the band the outdoor temperature is in has learned.
+        """Reset the current band's combined learned offset to zero at its centre.
 
         Returns the band index that was reset. The band's open-loop baseline
         goes with its learned part. The other bands, the shared part, the lag

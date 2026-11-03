@@ -327,6 +327,7 @@ class OutdoorBin:
     # different weight: `samples` is evidence our own action works and drives the
     # authority ramp, while a seed is only a better starting guess than zero.
     seeded: bool = False
+    explicit_reset: bool = False
 
 
 @dataclass(frozen=True)
@@ -518,13 +519,19 @@ def initial_state() -> LearnerState:
 
 
 def reset_bin(state: LearnerState, index: int) -> LearnerState:
-    """Forget one band's learned part and its baseline. The shared part and the other bands stay.
+    """Reset one band's combined offset to zero at its centre and clear its baseline.
 
     The baseline goes too: it seeds the band's offset the next time compensation
-    switches on, which would bring back what was just reset.
+    switches on, which would bring back what was just reset. An explicit value
+    prevents unvisited-band interpolation from restoring neighbouring learning.
+    The shared part and the other bands stay unchanged.
     """
     index = max(0, min(N_BINS - 1, index))
-    bins = tuple(OutdoorBin() if i == index else b for i, b in enumerate(state.bins))
+    fresh_bin = OutdoorBin(
+        hold_offset_c=0.0 - shared_weight(bin_centre(index)) * state.shared_offset_c,
+        explicit_reset=True,
+    )
+    bins = tuple(fresh_bin if i == index else b for i, b in enumerate(state.bins))
     baseline_bins = tuple(
         BaselineBin() if i == index else b for i, b in enumerate(state.baseline_bins)
     )
@@ -545,14 +552,15 @@ def coverage_of(bins: tuple[OutdoorBin, ...]) -> float:
 
 
 def _has_value(b: OutdoorBin) -> bool:
-    """Whether a bin holds a usable offset, learned or seeded.
+    """Whether a bin holds a usable offset, learned, seeded or explicitly reset.
 
     A seeded bin counts: an open-loop measurement of what the raw curve did in
     *this* band beats interpolating from a neighbouring band, even though it is
     weaker evidence than closed-loop integration. It deliberately does NOT count
-    towards `coverage_of`, which reports proven learning.
+    towards `coverage_of`, which reports proven learning. An explicit reset
+    likewise takes precedence over neighbouring values without claiming evidence.
     """
-    return b.samples > 0 or b.seeded
+    return b.samples > 0 or b.seeded or b.explicit_reset
 
 
 def effective_hold_offset(bins: tuple[OutdoorBin, ...], index: int) -> float:
