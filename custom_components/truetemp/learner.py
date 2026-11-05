@@ -601,6 +601,9 @@ def effective_hold_offset(bins: tuple[OutdoorBin, ...], index: int) -> float:
     return lower[1] + (upper[1] - lower[1]) * frac
 
 
+FREEZE_REASON_COMPENSATION_OFF = "compensation is off, so nothing is actually being applied"
+
+
 def _freeze_reason(inputs: LearnerInputs, state: LearnerState) -> str | None:
     """Why learning must not advance this cycle, or None to proceed.
 
@@ -609,7 +612,7 @@ def _freeze_reason(inputs: LearnerInputs, state: LearnerState) -> str | None:
     when its own output is what is actually driving the house.
     """
     if not inputs.is_active:
-        return "compensation is off, so nothing is actually being applied"
+        return FREEZE_REASON_COMPENSATION_OFF
     if not inputs.indoor_data_available or inputs.indoor_temp_c is None:
         return "indoor sensor unavailable"
     if inputs.indoor_sensor_set_changed:
