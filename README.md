@@ -173,9 +173,10 @@ Allt nedan är valfritt och kan hoppas över helt:
 
 ## Braskamin och överskottsvärme
 
-Eldar du i braskaminen? Slå på **Braskamin / överskottsvärme** så kan
+Eldar du i braskaminen? Slå på **Braskamin / överskottsvärme** under
+**Inställningar > Sol, vind, värme och elpris** så kan
 TrueTemp pausa värmen när huset redan är varmt och låta den återupptas när
-huset svalnar. Brytaren är av som standard. Solen kan ge samma effekt när
+huset svalnar. Inställningen är av som standard. Solen kan ge samma effekt när
 **Sol** är aktiverat.
 
 **Innan du testar:** det fungerar bara när TrueTemp styr via pumpens

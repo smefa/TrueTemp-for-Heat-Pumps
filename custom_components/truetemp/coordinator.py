@@ -399,6 +399,10 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
         self.learner_result: LearnerResult | None = None
         self.lag_result: LagResult | None = None
         self._learner_last_step_s: float | None = None
+        # `is_active` as the last learner step saw it. The learner runs on a
+        # 15-minute clock, so after a toggle its result still describes the old
+        # state; the sensor compares this to the live flag.
+        self.learner_step_active: bool | None = None
         # The contributing indoor sensor set from the last learner-step cycle.
         # `None` means "no prior cycle yet" — deliberately distinct from
         # `frozenset()` so the very first cycle is never flagged as a
@@ -1493,6 +1497,7 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
                     indoor_sensor_set_changed=indoor_sensor_set_changed,
                 ),
             )
+            self.learner_step_active = self.is_active
             _LOGGER.debug(
                 "Learner: %s | Lag: %s",
                 self.learner_result.reason,

@@ -5,12 +5,12 @@ from __future__ import annotations
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 
 from . import TrueTempConfigEntry
 from .coordinator import TrueTempCoordinator
-from .const import CONF_ENABLE_EXCESS_HEAT, DATA_LIVE_OPTIONS_SKIP_RELOAD
 from .sensor import TrueTempEntity
 
 
@@ -19,10 +19,27 @@ async def async_setup_entry(
     entry: TrueTempConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
+    # Remove the retired duplicate control from existing installations.
+    registry = er.async_get(hass)
+    retired_entity_id = registry.async_get_entity_id(
+        "switch", "truetemp", f"{entry.entry_id}_excess_heat",
+    )
+    if retired_entity_id is not None:
+        registry.async_remove(retired_entity_id)
+    # Keep the master control available to the Vacation card without a
+    # duplicate row in Home Assistant's automatically generated panels.
+    vacation_entity_id = registry.async_get_entity_id(
+        "switch", "truetemp", f"{entry.entry_id}_vacation_mode",
+    )
+    if vacation_entity_id is not None:
+        vacation_entry = registry.async_get(vacation_entity_id)
+        if vacation_entry is not None and vacation_entry.hidden_by is None:
+            registry.async_update_entity(
+                vacation_entity_id, hidden_by=er.RegistryEntryHider.INTEGRATION,
+            )
     async_add_entities(
         [
             ActiveSwitch(entry.runtime_data, entry),
-            ExcessHeatSwitch(entry.runtime_data, entry),
             VacationModeSwitch(entry.runtime_data, entry),
         ]
     )
@@ -109,6 +126,7 @@ class VacationModeSwitch(TrueTempEntity, SwitchEntity, RestoreEntity):
 
     _attr_translation_key = "vacation_mode"
     _attr_entity_category = EntityCategory.CONFIG
+    _attr_entity_registry_visible_default = False
 
     def __init__(
         self,
@@ -146,39 +164,3 @@ class VacationModeSwitch(TrueTempEntity, SwitchEntity, RestoreEntity):
         self.coordinator.vacation_armed = False
         self.async_write_ha_state()
         await self.coordinator.async_request_refresh()
-
-
-class ExcessHeatSwitch(TrueTempEntity, SwitchEntity):
-    """Persistent opt-in for measured fireplace / other excess warmth."""
-
-    _attr_translation_key = "excess_heat"
-    _attr_entity_category = EntityCategory.CONFIG
-    _attr_icon = "mdi:fireplace"
-
-    def __init__(self, coordinator: TrueTempCoordinator, entry: TrueTempConfigEntry) -> None:
-        super().__init__(coordinator, entry)
-        self._entry = entry
-        self._attr_unique_id = f"{entry.entry_id}_excess_heat"
-
-    @property
-    def available(self) -> bool:
-        return True
-
-    @property
-    def is_on(self) -> bool:
-        return self.coordinator.excess_heat_enabled
-
-    async def async_turn_on(self, **kwargs) -> None:
-        await self._set_enabled(True)
-
-    async def async_turn_off(self, **kwargs) -> None:
-        await self._set_enabled(False)
-
-    async def _set_enabled(self, enabled: bool) -> None:
-        if enabled == self.is_on:
-            return
-        # The listener refreshes without reload, preserving release hold-off.
-        self.hass.data.setdefault(DATA_LIVE_OPTIONS_SKIP_RELOAD, set()).add(self._entry.entry_id)
-        self.hass.config_entries.async_update_entry(
-            self._entry, options={**self._entry.options, CONF_ENABLE_EXCESS_HEAT: enabled},
-        )

@@ -65,7 +65,7 @@
         "description": "Alles hier ist optional. TrueTemp funktioniert auch, wenn auf dieser Seite nichts ausgefüllt wird.",
         "menu_options": {
           "settings": "Einstellungen",
-          "sources": "Sonne-, Wind- und Preissensoren",
+          "sources": "Sonne, Wind, Wärme und Strompreis",
           "price": "Stromkosten sparen",
           "output": "Ausgehende Sensoren",
           "vacation": "Urlaubspläne"
@@ -96,8 +96,8 @@
         }
       },
       "sources": {
-        "title": "Sonne-, Wind- und Preissensoren",
-        "description": "Optionale Zusatzfunktionen. Sonne und Wind lassen TrueTemp reagieren, bevor das Haus zu driften beginnt; ein Preissensor spart Geld, wenn Strom teuer ist.",
+        "title": "Sonne, Wind, Wärme und Strompreis",
+        "description": "Optionale Zusatzfunktionen. Sonne und Wind lassen TrueTemp reagieren, bevor das Haus zu driften beginnt; ein Preissensor spart Geld, wenn Strom teuer ist. Kamin / überschüssige Wärme kann die Heizung pausieren, wenn andere Wärmequellen das Haus erwärmen.",
         "data": {
           "weather_entity": "Wettervorhersage",
           "nordpool_price_entity": "Strompreis",
@@ -297,9 +297,6 @@
       },
       "vacation_mode": {
         "name": "Urlaubsmodus"
-      },
-      "excess_heat": {
-        "name": "Kamin / überschüssige Wärme"
       }
     },
     "select": {

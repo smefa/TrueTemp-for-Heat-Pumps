@@ -75,7 +75,13 @@ from .heuristic import (
     indoor_climate_offset_c,
 )
 from .holiday import HOLIDAY_PHASES
-from .learner import SPOOF_PER_INDOOR_C, bin_centre, bin_label, shared_weight
+from .learner import (
+    FREEZE_REASON_COMPENSATION_OFF,
+    SPOOF_PER_INDOOR_C,
+    bin_centre,
+    bin_label,
+    shared_weight,
+)
 from .vacation import serialize_plans
 
 # Substituted for an attribute that is None only because the feature that would
@@ -609,6 +615,20 @@ class StatusSensor(TrueTempEntity, SensorEntity):
 
         # --- How learning is going ------------------------------------------
         if learner is not None:
+            # The learner steps every 15 minutes, so right after a toggle its
+            # result still describes the old on/off state. Switched off: show
+            # that reason at once. Switched on: hide the stale "off" reason but
+            # keep `frozen`, since the "off" reason masks any other condition
+            # (sensor unavailable, hard limit) until the next step reveals it.
+            frozen = learner.frozen
+            freeze_reason = learner.freeze_reason
+            stepped_active = self.coordinator.learner_step_active
+            if stepped_active is not None and stepped_active != self.coordinator.is_active:
+                if self.coordinator.is_active:
+                    if freeze_reason == FREEZE_REASON_COMPENSATION_OFF:
+                        freeze_reason = None
+                else:
+                    frozen, freeze_reason = True, FREEZE_REASON_COMPENSATION_OFF
             attrs.update(
                 {
                     "learning_progress_pct": round(learner.progress * 100),
@@ -619,14 +639,14 @@ class StatusSensor(TrueTempEntity, SensorEntity):
                     "samples_learned": learner.total_samples,
                     "samples_this_band": learner.bin_samples,
                     "pump_at_capacity": learner.saturated,
-                    "learning_paused": learner.frozen,
+                    "learning_paused": frozen,
                 }
             )
-            if learner.freeze_reason and not (
-                learner.freeze_reason == "indoor sensor unavailable"
+            if freeze_reason and not (
+                freeze_reason == "indoor sensor unavailable"
                 and self.coordinator.in_startup_grace_period()
             ):
-                attrs["learning_paused_because"] = learner.freeze_reason
+                attrs["learning_paused_because"] = freeze_reason
             if learner.close_rate_c_per_h > 0:
                 attrs["recovery_rate_c_per_h"] = round(learner.close_rate_c_per_h, 3)
 

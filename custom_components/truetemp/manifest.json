@@ -9,5 +9,5 @@
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/smefa/TrueTemp-for-Heat-Pumps/issues",
   "requirements": [],
-  "version": "0.4.10-beta.2-heating-pause"
+  "version": "0.5.0"
 }
