@@ -104,18 +104,26 @@ sätten åt gången, av samma anledning som ovan.
 ## Installation
 
 <a href="https://my.home-assistant.io/redirect/hacs_repository/?owner=smefa&repository=TrueTemp-for-Heat-Pumps&category=integration" target="_blank">
-  <img src="https://my.home-assistant.io/badges/hacs_repository.svg" alt="Öppna din Home Assistant-instans och lägg till repositoryt i Home Assistant Community Store.">
+  <img src="https://my.home-assistant.io/badges/hacs_repository.svg" alt="Öppna din Home Assistant-instans och lägg till repositoryt i Marketplace.">
 </a>
 
-1. Öppna **HACS** i Home Assistant.
-2. Klicka på de tre punkterna uppe i högra hörnet → **Anpassade repositories**
-   (Custom repositories).
-3. Lägg till `https://github.com/smefa/TrueTemp-for-Heat-Pumps` med kategorin
-   **Integration**.
-4. Sök upp **TrueTemp** i HACS och installera.
-5. Starta om Home Assistant.
-6. Gå till **Inställningar → Enheter & tjänster → Lägg till integration**
-   och sök på **TrueTemp**.
+Home Assistant 2026.11 och senare har **Marketplace** inbyggt, och den ersätter
+HACS.
+
+1. Gå till **Inställningar → Marketplace** i Home Assistant.
+2. Första gången läser du varningen och väljer **I understand the risks and agree**
+   (godkänn varningen).
+3. Sök upp **TrueTemp**. Finns den inte i katalogen väljer du **Add from link**
+   (Lägg till från länk) och anger `https://github.com/smefa/TrueTemp-for-Heat-Pumps`.
+4. Välj **Install** (Installera). Integrationer går direkt vidare till
+   installationsguiden, utan omstart.
+5. Svara på frågorna nedan.
+
+Har du en äldre version än 2026.11? Lägg till repositoryt i HACS som anpassat
+repository (kategorin **Integration**) och starta sedan om Home Assistant.
+
+Har du redan installerat TrueTemp via HACS? Då flyttas den automatiskt till
+Marketplace när du uppdaterar till 2026.11 och får fortsatt uppdateringar.
 
 Du får svara på fyra enkla frågor:
 
@@ -270,3 +278,8 @@ inlärningen fungerar under huven, eller är du utvecklare, finns den
 ## Licens
 
 MIT — se [LICENSE](LICENSE).
+
+
+## Ubuntu development
+
+See [Ubuntu setup and validation](docs/ubuntu.md) for native tools, tests and local packaging.

@@ -437,10 +437,17 @@
     },
     "reset_learning": {
       "name": "Nollställ inlärd data",
-      "description": "Radera det zonen har lärt sig (offsettabellen och uppskattningen av svarstid) och börja om. Använd efter byte av ute- eller innegivare. Inställningar och scheman behålls. Går inte att ångra.",
+      "description": "Radera det zonen har lärt sig (offsettabellen, uppskattningen av svarstid och dygnsmönstret) och börja om. Använd efter byte av ute- eller innegivare. Inställningar och scheman behålls. Går inte att ångra.",
       "fields": {
         "config_entry_id": { "name": "Zon", "description": "Vilken TrueTemp-zon som ska nollställas." },
         "current_band_only": { "name": "Bara nuvarande band", "description": "Nollställ bara det utomhusband zonen befinner sig i nu. Övriga band, den gemensamma offseten och svarstidsuppskattningen behålls." }
+      }
+    },
+    "reset_response_time": {
+      "name": "Nollställ svarstid",
+      "description": "Glöm de uppmätta svarstidsavläsningarna och gå tillbaka till standardvärdet för värmesystemet. De inlärda offseten behålls. Använd efter byte av element eller värmepump, eller om den visade svarstiden ser fel ut.",
+      "fields": {
+        "config_entry_id": { "name": "Zon", "description": "Vilken TrueTemp-zon som ska nollställas." }
       }
     },
     "vacation_plan_set": {

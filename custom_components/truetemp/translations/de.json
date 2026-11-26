@@ -437,10 +437,17 @@
     },
     "reset_learning": {
       "name": "Gelernte Daten zurücksetzen",
-      "description": "Löscht, was diese Zone gelernt hat (Offset-Tabelle und Reaktionszeit-Schätzung), und beginnt von vorn. Nach dem Tausch des Außen- oder Innensensors verwenden. Einstellungen und Zeitpläne bleiben erhalten. Kann nicht rückgängig gemacht werden.",
+      "description": "Löscht, was diese Zone gelernt hat (Offset-Tabelle, Reaktionszeit-Schätzung und Tagesmuster), und beginnt von vorn. Nach dem Tausch des Außen- oder Innensensors verwenden. Einstellungen und Zeitpläne bleiben erhalten. Kann nicht rückgängig gemacht werden.",
       "fields": {
         "config_entry_id": { "name": "Zone", "description": "Welche TrueTemp-Zone zurückgesetzt werden soll." },
         "current_band_only": { "name": "Nur aktuelles Band", "description": "Setzt nur das Außentemperaturband zurück, in dem die Zone gerade liegt. Andere Bänder, der gemeinsame Offset und die Reaktionszeit-Schätzung bleiben erhalten." }
+      }
+    },
+    "reset_response_time": {
+      "name": "Reaktionszeit zurücksetzen",
+      "description": "Verwirft die gemessenen Reaktionszeit-Werte und kehrt zum Standardwert der Heizungsart zurück. Die gelernten Offsets bleiben erhalten. Nach dem Tausch von Heizkörpern oder Wärmepumpe verwenden, oder wenn die angezeigte Reaktionszeit falsch aussieht.",
+      "fields": {
+        "config_entry_id": { "name": "Zone", "description": "Welche TrueTemp-Zone zurückgesetzt werden soll." }
       }
     },
     "vacation_plan_set": {

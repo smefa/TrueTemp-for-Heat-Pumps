@@ -58,6 +58,7 @@ SERVICE_VACATION_PLAN_REMOVE = "vacation_plan_remove"
 SERVICE_VACATION_PLAN_REORDER = "vacation_plan_reorder"
 
 SERVICE_RESET_LEARNING = "reset_learning"
+SERVICE_RESET_RESPONSE_TIME = "reset_response_time"
 SERVICE_PAUSE_HEATING = "pause_heating"
 SERVICE_RESUME_HEATING = "resume_heating"
 
@@ -76,6 +77,8 @@ _RESET_LEARNING_SCHEMA = vol.Schema(
         vol.Optional("current_band_only", default=False): cv.boolean,
     }
 )
+
+_RESET_RESPONSE_TIME_SCHEMA = vol.Schema({vol.Required("config_entry_id"): cv.string})
 
 _WEEKDAY = vol.All(vol.Coerce(int), vol.Range(min=0, max=6))
 _MONTH = vol.All(vol.Coerce(int), vol.Range(min=1, max=12))
@@ -269,6 +272,15 @@ async def _async_handle_reset_learning(call: ServiceCall) -> None:
         await entry.runtime_data.async_reset_learning()
 
 
+async def _async_handle_reset_response_time(call: ServiceCall) -> None:
+    entry = _resolve_entry(call.hass, call.data["config_entry_id"])
+    if entry.state is not ConfigEntryState.LOADED:
+        raise ServiceValidationError(
+            translation_domain=DOMAIN, translation_key="service_entry_not_loaded"
+        )
+    await entry.runtime_data.async_reset_response_time()
+
+
 async def _async_handle_pause_heating(call: ServiceCall) -> None:
     entry = _resolve_entry(call.hass, call.data["config_entry_id"])
     if entry.state is not ConfigEntryState.LOADED:
@@ -306,6 +318,12 @@ def async_register_services(hass: HomeAssistant) -> None:
         SERVICE_RESET_LEARNING,
         _async_handle_reset_learning,
         schema=_RESET_LEARNING_SCHEMA,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_RESET_RESPONSE_TIME,
+        _async_handle_reset_response_time,
+        schema=_RESET_RESPONSE_TIME_SCHEMA,
     )
     hass.services.async_register(
         DOMAIN,

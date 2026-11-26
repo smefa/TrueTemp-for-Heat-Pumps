@@ -64,6 +64,7 @@ def coordinator():
         "current_price = None\nprice_ok = False\nprice_forecast = None\n"
         "price_significance_factor = 1.0\ntoday_spread = None\n"
         "seasonal_reference_spread_c = None\n"
+        "seasonal_ref_price_c = None\n"
         "forecast_read = SimpleNamespace(outdoor_series=None, wind_series=None, solar_series=None)"
     ).body
     refresh.body = preamble + update.body[start:stop + 1] + refresh.body
@@ -103,6 +104,7 @@ def coordinator():
         resolve_heating_hard_limit_engaged=heuristic.resolve_heating_hard_limit_engaged,
         lag_push=lag.push,
         lag_estimate=lag.estimate,
+        lag_harvest=lag.harvest,
         learner_step=step,
         LearnerInputs=learner.LearnerInputs,
         _LOGGER=logging.getLogger(__name__),
@@ -112,7 +114,7 @@ def coordinator():
                              level=0), advance, excess_method, refresh] + [
             node for node in control.body if getattr(node, "name", None) in (
                 "_advance_heating_pause", "_pause_indoor_ready", "_pause_outdoor_ready",
-                "_cancel_pause_timer", "_retain_pause_lag",
+                "_cancel_pause_timer",
             )
         ],
         type_ignores=[],
@@ -121,7 +123,7 @@ def coordinator():
     instance = SimpleNamespace(
         excess_heat_state=excess.ExcessHeatState(), excess_heat_enabled=False,
         heating_pause=pause.HeatingPause(), _pause_adjustment_c=0.0,
-        _pause_since_learning=False, _pause_lag_reference=None,
+        _pause_since_learning=False,
         _pause_timer_unsub=None, comfort_min_c=18.0,
         entry={const.CONF_OUTDOOR_TEMP_SENSOR: "sensor.outdoor"},
         output_mode=const.OUTPUT_MODE_OUTDOOR_SPOOF,
@@ -147,10 +149,11 @@ def coordinator():
         learner_state=learner.initial_state(),
         _lag_result=lambda: instance.lag_result,
         _schedule_state_save=lambda: None,
+        _advance_daily_pattern=lambda: None,
     )
     instance._advance_excess_heat = MethodType(namespace["_advance_excess_heat"], instance)
     for method in ("_advance_heating_pause", "_pause_indoor_ready", "_pause_outdoor_ready",
-                   "_cancel_pause_timer", "_retain_pause_lag"):
+                   "_cancel_pause_timer"):
         setattr(instance, method, MethodType(namespace[method], instance))
     instance._advance_learning = MethodType(namespace["_advance_learning"], instance)
     instance._due_for_learner_step = (
@@ -405,43 +408,55 @@ def test_pause_between_learning_ticks_still_freezes_next_tick(coordinator):
     assert not instance._pause_since_learning
 
 
+def _with_readings(instance, rise_minutes=240.0, count=3):
+    """Give the instance clean rise readings, as if measured earlier."""
+    now = datetime.now(timezone.utc).timestamp()
+    instance.lag_state = replace(
+        instance.lag_state,
+        readings=tuple(lag.LagReading("rise", rise_minutes, now) for _ in range(count)),
+    )
+
+
 def test_external_pause_preserves_measured_response_estimate(coordinator):
     instance, clock, _ = coordinator
     prepare_room(instance)
     instance.indoor_sensor_readings = {"room": 20.0}
-    measured = replace(instance.lag_result, rise_minutes=240.0, rise_measured=True)
-    instance.lag_result = measured
+    _with_readings(instance)
+    expected = lag.estimate(instance.lag_state, "radiators").rise_minutes
+    assert expected > 90.0
     instance.heating_pause = pause.request(pause.HeatingPause(), clock[0], 900)
     instance.refresh(indoor_temp_c=20.0, indoor_contributing=frozenset({"room"}))
-    assert instance.lag_result is measured
+    assert instance.lag_result.rise_minutes == expected
     clock[0] += 900
     instance.refresh(indoor_temp_c=20.0, indoor_contributing=frozenset({"room"}))
-    assert instance.lag_result is measured
-    assert instance.heating_pause.recovery_until_s == clock[0] + 6 * 3600
+    assert instance.lag_result.rise_minutes == expected
+    window_h = min(6.0, max(2.0, 2.0 * expected / 60.0))
+    assert instance.heating_pause.recovery_until_s == clock[0] + window_h * 3600
     instance.heating_pause = pause.HeatingPause()
     instance._pause_since_learning = False
     clock[0] += 900
     instance.refresh(indoor_temp_c=20.0, indoor_contributing=frozenset({"room"}))
-    assert instance.lag_result.rise_minutes == 240.0
+    assert instance.lag_result.rise_minutes == expected
     assert instance.lag_result.rise_measured
-    assert "Rebuilding clean events" in instance.lag_result.reason
+    assert instance.lag_result.rise_events == 3
 
 
-def test_new_clean_estimates_replace_pre_pause_measurements_per_direction(coordinator):
-    instance, _, _ = coordinator
-    instance._pause_lag_reference = replace(
-        instance.lag_result, rise_minutes=240, rise_measured=True,
-        fall_minutes=300, fall_measured=True,
-    )
-    candidate = replace(instance.lag_result, rise_minutes=180, rise_measured=True)
-    rebuilt = instance._retain_pause_lag(candidate)
-    assert rebuilt.rise_minutes == 180
-    assert rebuilt.fall_minutes == 300
-    fallback = lag.estimate(lag.initial_state(15.0), "radiators")
-    assert instance._retain_pause_lag(fallback).rise_minutes == 180
-    candidate = replace(candidate, fall_minutes=240, fall_measured=True)
-    assert instance._retain_pause_lag(candidate) == candidate
-    assert instance._pause_lag_reference is None
+def test_unavailable_indoor_sensor_keeps_measured_response(coordinator):
+    instance, clock, _ = coordinator
+    prepare_room(instance)
+    instance.indoor_sensor_readings = {"room": 20.0}
+    _with_readings(instance, 150.0, 5)
+    expected = lag.estimate(instance.lag_state, "radiators").rise_minutes
+    instance.lag_state = lag.push(instance.lag_state, 0.0, 20.0, 21.0)
+    # The indoor aggregate disappears: the buffer is wiped, the readings are not.
+    instance.indoor_sensor_readings = {}
+    for _ in range(3):
+        clock[0] += 900
+        instance.refresh(indoor_temp_c=None, indoor_contributing=frozenset())
+    assert instance.lag_state.indoors_c == ()
+    assert instance.lag_result.rise_minutes == expected
+    assert instance.lag_result.rise_measured
+    assert not instance.lag_result.fall_measured
 
 
 def test_stale_outdoor_sensor_releases_external_pause(coordinator):

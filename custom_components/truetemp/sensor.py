@@ -77,6 +77,7 @@ from .heuristic import (
 from .holiday import HOLIDAY_PHASES
 from .learner import (
     FREEZE_REASON_COMPENSATION_OFF,
+    FREEZE_REASON_NO_ELAPSED_TIME,
     SPOOF_PER_INDOOR_C,
     bin_centre,
     bin_label,
@@ -629,6 +630,10 @@ class StatusSensor(TrueTempEntity, SensorEntity):
                         freeze_reason = None
                 else:
                     frozen, freeze_reason = True, FREEZE_REASON_COMPENSATION_OFF
+            # A restart's first step has nothing to measure from, so it always
+            # lands here. That is bookkeeping, not a pause worth reporting.
+            if freeze_reason == FREEZE_REASON_NO_ELAPSED_TIME:
+                frozen, freeze_reason = False, None
             attrs.update(
                 {
                     "learning_progress_pct": round(learner.progress * 100),
@@ -676,6 +681,33 @@ class StatusSensor(TrueTempEntity, SensorEntity):
                     "wind_down_time_min": round(lag.fall_minutes),
                     "response_time_measured": lag.rise_measured,
                     "wind_down_time_measured": lag.fall_measured,
+                    "response_time_source": lag.rise_source,
+                    "wind_down_time_source": lag.fall_source,
+                    "response_time_readings": lag.rise_events,
+                    "wind_down_time_readings": lag.fall_events,
+                    "response_time_default_min": round(lag.rise_default_minutes),
+                    "wind_down_time_default_min": round(lag.fall_default_minutes),
+                }
+            )
+
+        # --- Daily pattern (shadow only, never applied) ------------------------
+        pattern = self.coordinator.daily_pattern_result
+        if pattern is not None:
+            attrs.update(
+                {
+                    "daily_pattern_status": pattern.reason,
+                    "daily_pattern_shadow_offset_c": round(pattern.shadow_offset_c, 2),
+                    "daily_pattern_consistent_hours": pattern.confident_hours,
+                    "daily_pattern_potential_improvement_pct": (
+                        None
+                        if pattern.potential_improvement_pct is None
+                        else round(pattern.potential_improvement_pct, 1)
+                    ),
+                    # Warmth by hour, positive meaning usually too warm then;
+                    # None for an hour not seen yet.
+                    "daily_pattern_by_hour_c": [
+                        None if v is None else round(v, 2) for v in pattern.shape_c
+                    ],
                 }
             )
 

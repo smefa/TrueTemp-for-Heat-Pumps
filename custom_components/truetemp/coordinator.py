@@ -148,6 +148,7 @@ from .heuristic import (
     initial_price_spread_history,
     price_significance,
     resolve_heating_hard_limit_engaged,
+    seasonal_reference_price_c,
     solar_effect_of,
     today_price_spread_and_median_c,
     update_price_spread_history,
@@ -159,12 +160,23 @@ from .holiday import (
     HOLIDAY_PHASE_SETBACK,
     HolidayResult,
 )
+from .daily_pattern import (
+    DailyPatternResult,
+    DailyPatternState,
+    evaluate as daily_pattern_evaluate,
+    from_dict as daily_pattern_from_dict,
+    initial_state as daily_pattern_initial_state,
+    to_dict as daily_pattern_to_dict,
+    update as daily_pattern_update,
+)
 from .indoor_aggregation import aggregate as _aggregate_indoor_temps_c
 from .lag import (
     DEFAULT_HEATING_TYPE,
     LagResult,
     LagState,
+    clear_readings as lag_clear_readings,
     estimate as lag_estimate,
+    harvest as lag_harvest,
     initial_state as lag_initial_state,
     push as lag_push,
 )
@@ -398,6 +410,9 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
         self.lag_state: LagState = lag_initial_state(UPDATE_INTERVAL_MINUTES)
         self.learner_result: LearnerResult | None = None
         self.lag_result: LagResult | None = None
+        # Shadow only: learned and reported, never added to the output.
+        self.daily_pattern_state: DailyPatternState = daily_pattern_initial_state()
+        self.daily_pattern_result: DailyPatternResult | None = None
         self._learner_last_step_s: float | None = None
         # `is_active` as the last learner step saw it. The learner runs on a
         # 15-minute clock, so after a toggle its result still describes the old
@@ -551,7 +566,6 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
         self.heating_pause = HeatingPause()
         self._pause_adjustment_c = 0.0
         self._pause_since_learning = False
-        self._pause_lag_reference: LagResult | None = None
         self._pause_timer_unsub: Callable[[], None] | None = None
         entry.async_on_unload(self._cancel_pause_timer)
 
@@ -560,6 +574,7 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
         # substitute for what was known at decision time.
         self._last_price_forecast: tuple[tuple[float, float], ...] | None = None
         self._last_outdoor_forecast: tuple[tuple[float, float], ...] | None = None
+        self._last_wind_forecast: tuple[tuple[float, float], ...] | None = None
         self._last_solar_forecast: tuple[tuple[float, float], ...] | None = None
         # Sun pre-cool hold (sun_hold.py). Not persisted: a restart just
         # drops the hold, which is the safe direction.
@@ -1353,7 +1368,9 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
     def _lag_result(self) -> LagResult:
         """The current lag estimate, recomputed lazily and cached per step."""
         if self.lag_result is None:
-            self.lag_result = lag_estimate(self.lag_state, self.heating_type)
+            self.lag_result = lag_estimate(
+                self.lag_state, self.heating_type, dt_util.utcnow().timestamp()
+            )
         return self.lag_result
 
     def _due_for_learner_step(self) -> bool:
@@ -1451,12 +1468,12 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
                 lag_indoor_c,
                 self._effective_target_c,
             )
-            if not pause_frozen or self.lag_result is None:
-                self.lag_result = self._retain_pause_lag(
-                    lag_estimate(self.lag_state, self.heating_type),
-                )
-            if pause_frozen:
-                self._pause_lag_reference = self.lag_result
+            # Readings live in `lag_state` and survive a buffer wipe (pause,
+            # unavailable sensor, sensor-set change), so no separate retention
+            # is needed: a wipe only delays new readings.
+            now_ts = dt_util.utcnow().timestamp()
+            self.lag_state = lag_harvest(self.lag_state, self.heating_type, now_ts)
+            self.lag_result = lag_estimate(self.lag_state, self.heating_type, now_ts)
 
             previous = self.data
             self.learner_state, self.learner_result = learner_step(
@@ -1505,21 +1522,61 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
             )
             self._manual_recovery_since_learning = False
             self._pause_since_learning = False
+            self._advance_daily_pattern()
             self._schedule_state_save()
             return True
         except Exception as err:  # noqa: BLE001 - never break output over learning
             _LOGGER.warning("Learner step failed (holding previous offset): %s", err)
             return False
 
+    def _advance_daily_pattern(self) -> None:
+        """Learn the daily pattern from this step and work out its shadow offset.
+
+        Learns only from steps the learner itself learned from, so pauses,
+        price braking, pre-ramps and sun are left out. Never raises: the
+        pattern is not used for control, so a failure must not cost the
+        learner its step.
+        """
+        try:
+            local = dt_util.as_local(dt_util.utcnow())
+            hour = local.hour + local.minute / 60.0
+            learner = self.learner_result
+            if learner is not None and not learner.frozen and learner.error_c is not None:
+                self.daily_pattern_state = daily_pattern_update(
+                    self.daily_pattern_state, hour, -learner.error_c, UPDATE_INTERVAL_MINUTES
+                )
+            self.daily_pattern_result = daily_pattern_evaluate(
+                self.daily_pattern_state,
+                hour,
+                self._lag_result().rise_minutes,
+                SPOOF_PER_INDOOR_C,
+                UPDATE_INTERVAL_MINUTES,
+            )
+        except Exception as err:  # noqa: BLE001 - shadow only, never break learning
+            _LOGGER.warning("Daily pattern step failed (ignored): %s", err)
+
+    def _state_payload(
+        self,
+        learner_state: LearnerState | None = None,
+        lag_state: LagState | None = None,
+        daily_pattern: DailyPatternState | None = None,
+    ) -> dict:
+        """Everything learned, as one store payload. Defaults to the live state."""
+        payload = learner_serialize(
+            learner_state if learner_state is not None else self.learner_state,
+            lag_state if lag_state is not None else self.lag_state,
+            self.price_spread_history,
+            self._outdoor_reference(),
+        )
+        payload["daily_pattern"] = daily_pattern_to_dict(
+            daily_pattern if daily_pattern is not None else self.daily_pattern_state
+        )
+        return payload
+
     def _schedule_state_save(self) -> None:
         try:
             self._store.async_delay_save(
-                lambda: learner_serialize(
-                    self.learner_state,
-                    self.lag_state,
-                    self.price_spread_history,
-                    self._outdoor_reference(),
-                ),
+                self._state_payload,
                 LEARNER_STATE_SAVE_DELAY_SECONDS,
             )
         except Exception as err:  # noqa: BLE001 - persistence is best-effort
@@ -1539,6 +1596,13 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
             return
         if stored is None:
             return
+        # Kept apart from the learner payload, like the outdoor reference: a
+        # learner model change does not make the house's daily pattern wrong.
+        pattern = daily_pattern_from_dict(
+            stored.get("daily_pattern") if isinstance(stored, dict) else None
+        )
+        if pattern is not None:
+            self.daily_pattern_state = pattern
         reference = outdoor_reference_from(stored)
         if reference is not None:
             self.outdoor_guard_state = OutdoorGuardState(
@@ -1561,14 +1625,7 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
         reload, so without this the most recent learning is lost on every
         options change."""
         try:
-            await self._store.async_save(
-                learner_serialize(
-                    self.learner_state,
-                    self.lag_state,
-                    self.price_spread_history,
-                    self._outdoor_reference(),
-                )
-            )
+            await self._store.async_save(self._state_payload())
         except Exception as err:  # noqa: BLE001
             _LOGGER.warning("Could not save learned state (ignored): %s", err)
 
@@ -1631,7 +1688,7 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
         return result.value_c
 
     async def async_reset_learning(self) -> None:
-        """Forget the offset table and the lag buffer; start from a cold learner.
+        """Forget the offset table, the lag buffer and the daily pattern; start cold.
 
         For after a sensor swap, when the table is calibrated to readings that
         no longer exist. The price-spread history is kept: it comes from the
@@ -1642,17 +1699,31 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
         """
         fresh_learner = learner_initial_state()
         fresh_lag = lag_initial_state(UPDATE_INTERVAL_MINUTES)
+        fresh_pattern = daily_pattern_initial_state()
         await self._store.async_save(
-            learner_serialize(
-                fresh_learner, fresh_lag, self.price_spread_history, self._outdoor_reference()
-            )
+            self._state_payload(fresh_learner, fresh_lag, fresh_pattern)
         )
         self.learner_state = fresh_learner
         self.lag_state = fresh_lag
+        self.daily_pattern_state = fresh_pattern
         self.learner_result = None
         self.lag_result = None
-        self._pause_lag_reference = None
+        self.daily_pattern_result = None
         self._learner_last_step_s = None
+        await self.async_request_refresh()
+
+    async def async_reset_response_time(self) -> None:
+        """Forget the measured response-time readings and the sample buffer.
+
+        The learned offsets are untouched: only the house's response time goes
+        back to the heating-type default. Written to disk first, like
+        `async_reset_learning`, so a failed write is raised and nothing in
+        memory changes.
+        """
+        fresh_lag = lag_clear_readings(self.lag_state)
+        await self._store.async_save(self._state_payload(lag_state=fresh_lag))
+        self.lag_state = fresh_lag
+        self.lag_result = None
         await self.async_request_refresh()
 
     async def async_reset_current_band(self) -> int:
@@ -1670,11 +1741,7 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
                 translation_domain=DOMAIN, translation_key="service_no_current_band"
             )
         fresh_learner = learner_reset_bin(self.learner_state, index)
-        await self._store.async_save(
-            learner_serialize(
-                fresh_learner, self.lag_state, self.price_spread_history, self._outdoor_reference()
-            )
-        )
+        await self._store.async_save(self._state_payload(learner_state=fresh_learner))
         self.learner_state = fresh_learner
         self.learner_result = None
         # Step on the refresh below rather than waiting out the learner clock:
@@ -1815,6 +1882,7 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
         price_forecast = self._price_forecast_offsets()
         self._last_price_forecast = price_forecast
         self._last_outdoor_forecast = forecast_read.outdoor_series
+        self._last_wind_forecast = forecast_read.wind_series
         self._last_solar_forecast = forecast_read.solar_series
 
         # Price significance: a taper on braking/pre-charge authority for days
@@ -1829,6 +1897,7 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
         today_spread: float | None = None
         price_significance_factor = 1.0
         seasonal_reference_spread_c: float | None = None
+        seasonal_ref_price_c: float | None = None
         if today_band is not None:
             today_spread, today_median = today_band
             updated_history = update_price_spread_history(
@@ -1850,6 +1919,7 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
                 self.price_spread_history,
                 self.price_significance_floor_c,
             )
+            seasonal_ref_price_c = seasonal_reference_price_c(self.price_spread_history)
 
         # Vacation setback: resolve this cycle's phase/target before anything
         # below reads `_effective_target_c`. `rise_hours` comes from the
@@ -2013,6 +2083,7 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
             price_significance_factor=price_significance_factor,
             today_price_spread_c=today_spread,
             seasonal_reference_spread_c=seasonal_reference_spread_c,
+            seasonal_reference_price_c=seasonal_ref_price_c,
             prev_heating_hard_limit_engaged=bool(
                 self.data and self.data.heating_hard_limit_engaged
             ),
@@ -2056,28 +2127,6 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
             await self._log_data_point(result)
 
         return result
-
-    def _retain_pause_lag(self, candidate: LagResult) -> LagResult:
-        reference = self._pause_lag_reference
-        if reference is None:
-            return candidate
-        retained = {}
-        for direction in ("rise", "fall"):
-            if getattr(reference, f"{direction}_measured") and not getattr(
-                candidate, f"{direction}_measured",
-            ):
-                for suffix in ("minutes", "measured", "events"):
-                    field = f"{direction}_{suffix}"
-                    retained[field] = getattr(reference, field)
-        if not retained:
-            self._pause_lag_reference = None
-            return candidate
-        candidate = replace(candidate, **retained)
-        self._pause_lag_reference = candidate
-        return replace(candidate, reason=(
-            f"Rebuilding clean events after heating pause; retaining measured response: "
-            f"rise {candidate.rise_minutes:.0f} min, fall {candidate.fall_minutes:.0f} min"
-        ))
 
     def _apply_heating_pause(self, result: HeuristicResult) -> HeuristicResult:
         result = replace(
@@ -2838,8 +2887,15 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
             "wind_preramp_c": result.wind_preramp_c,
             "weather_preramp_c": result.weather_preramp_c,
             "weather_preramp_active": result.weather_preramp_active,
+            "weather_lookahead_reason": result.weather_lookahead_reason,
+            "weather_lookahead_minutes": result.weather_lookahead_minutes,
+            "outdoor_forecast_status": result.outdoor_forecast_status,
+            "wind_forecast_status": result.wind_forecast_status,
             "sun_precool_c": result.sun_precool_c,
             "sun_precool_active": result.sun_precool_active,
+            "sun_precool_reason": result.sun_precool_reason,
+            "solar_forecast_status": result.solar_forecast_status,
+            "sun_precool_lookahead_minutes": result.sun_precool_lookahead_minutes,
             "heating_hard_limit_engaged": result.heating_hard_limit_engaged,
             "excess_heat_source": result.excess_heat_source,
             "heating_paused": result.heating_paused,
@@ -2850,6 +2906,18 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
             "excess_heat_learning_frozen": self.excess_heat_state.learning_frozen(time.monotonic()),
             "lead_minutes_effective": result.lead_minutes_effective,
         }
+        pattern = self.daily_pattern_result
+        if pattern is not None:
+            # Shadow only: what the daily pattern would have added, never applied.
+            record.update(
+                {
+                    "pattern_shadow_offset_c": pattern.shadow_offset_c,
+                    "pattern_shadow_offset_uncapped_c": pattern.shadow_offset_uncapped_c,
+                    "pattern_lead_hour": pattern.lead_hour,
+                    "pattern_consistent_hours": pattern.confident_hours,
+                    "pattern_potential_improvement_pct": pattern.potential_improvement_pct,
+                }
+            )
         if learner is not None:
             record.update(
                 {
@@ -2902,23 +2970,25 @@ class TrueTempCoordinator(DataUpdateCoordinator[HeuristicResult]):
                     "lag_fall_minutes": lag.fall_minutes,
                     "lag_rise_measured": lag.rise_measured,
                     "lag_fall_measured": lag.fall_measured,
+                    "lag_rise_events": lag.rise_events,
+                    "lag_fall_events": lag.fall_events,
                 }
             )
         if self._last_price_forecast is not None:
             record["price_forecast"] = [
                 [round(h, 3), p] for h, p in self._last_price_forecast
             ]
-        # Forecasts get revised, so realised weather is not a substitute for
-        # what was known at decision time. Logged only while the pre-ramp is
-        # actually acting, though — the same low-cardinality rule
-        # `learner_freeze_reason` follows, since the full series on every row
-        # roughly doubles the record for something that only matters on the
-        # rows where it drove a decision.
-        if result.weather_preramp_active and self._last_outdoor_forecast is not None:
+        # Keep issued forecasts even when no action was taken: diagnosing a
+        # missing pre-ramp requires the inputs that led to that decision too.
+        if self._last_outdoor_forecast is not None:
             record["outdoor_forecast"] = [
                 [round(h, 3), round(t, 2)] for h, t in self._last_outdoor_forecast
             ]
-        if result.sun_precool_active and self._last_solar_forecast is not None:
+        if self._last_wind_forecast is not None:
+            record["wind_forecast_ms"] = [
+                [round(h, 3), round(v, 3)] for h, v in self._last_wind_forecast
+            ]
+        if self._last_solar_forecast is not None:
             record["solar_forecast"] = [
                 [round(h, 3), round(v, 3)] for h, v in self._last_solar_forecast
             ]

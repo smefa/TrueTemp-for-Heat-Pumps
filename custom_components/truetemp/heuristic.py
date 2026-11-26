@@ -431,23 +431,26 @@ def cold_brake_factor(
 # --- Forecast-relative price band ------------------------------------------
 # Below this many forecast points there is no usable day-distribution.
 _MIN_FORECAST_POINTS = 6
-# The day must vary by at least this fraction (peak vs median, relative to the
-# median) before any compensation engages. A flat day gets left alone.
-#
-# This ratio has exactly the two failure modes `price_significance()` below
-# was built to fix (ranks money backwards, degenerates near a zero median),
-# and is deliberately left as-is here rather than rewritten to use it:
-# `engaged` is a hard boolean that `price_flat_day` and the reason string also
-# key off, and swapping its logic was more churn than the actual bug needed.
-# What changes instead is the failure mode's reach: a day that spuriously
-# reads "engaged" off a near-zero median now still gets tapered to ~0
-# authority by `price_significance()`'s absolute floor before it reaches
-# `price_shift_c`, so this check's own degeneracy no longer reaches the
-# published output — see `compute()`.
-PRICE_MIN_RELATIVE_SPREAD = 0.2
-# Where in the median->peak range braking starts. Below this the price is
+# Peak-minus-baseline spread at or below this is treated as a genuinely flat
+# day (no variation at all). Small non-zero swings are left to
+# `price_significance()` to taper smoothly rather than tripping a hard
+# relative-spread cliff — which previously misclassified a 12.5h winter
+# daytime plateau (1.29 -> 4.94 SEK/kWh) as "flat" because median sat on the
+# plateau itself.
+_PRICE_FLAT_EPS = 1e-9
+# Where in the baseline->peak range braking starts. Below this the price is
 # "ordinary for today" and the convex curve keeps the response near zero.
 _PRICE_ENGAGE_FRACTION = 0.25
+# Historical price-level boost (the second half of the split model): once a
+# cycle is ALREADY inside today's expensive band (`price > start`), a price
+# far above the 30-day rolling median ramps response toward 1.0 across the
+# whole plateau instead of waiting for today's single peak quarter-hour.
+# Ratios are dimensionless and therefore currency-free.
+PRICE_HISTORICAL_BOOST_START_RATIO = 2.0
+PRICE_HISTORICAL_BOOST_FULL_RATIO = 4.0
+# Entry ramp inside [start, full] so the historical boost rises smoothly from
+# 0 at `start` rather than stepping discontinuously across the threshold.
+_PRICE_HISTORICAL_BOOST_ENTRY_FRACTION = 0.25
 
 
 def _percentile(sorted_vals: list[float], q: float) -> float:
@@ -464,13 +467,16 @@ def _percentile(sorted_vals: list[float], q: float) -> float:
 
 def _price_band_info(
     forecast: tuple[tuple[float, float], ...] | None,
-) -> tuple[float, float, float, bool] | None:
-    """The price band for this cycle: (engage, full authority, median, engaged).
+) -> tuple[float, float, float, float, bool] | None:
+    """The price band for this cycle: (engage, full, median, baseline, engaged).
 
-    Derived from the day's own distribution — median is "ordinary for today",
-    peak is full authority — so the response self-adapts across seasons and
-    still catches short one- and two-hour spikes that a high percentile would
-    miss. `engaged` is False on a flat day.
+    Derived from the day's own distribution — `baseline = min(median, mean)`
+    is "ordinary for today", peak is full authority — so the response
+    self-adapts across seasons, catches short spikes, and does not collapse
+    onto a long (>= 12h) expensive daytime plateau where the median itself
+    sits on the plateau. On normal right-skewed spike days `median <= mean`,
+    so `baseline == median`. `engaged` is False only on a genuinely flat day;
+    small non-zero swings are smoothly damped by `price_significance()`.
 
     Returns None when there is no usable forecast, which means "do nothing".
     That is deliberately not the same as the absolute-threshold fallback this
@@ -482,22 +488,24 @@ def _price_band_info(
         return None
     prices = sorted(p for _, p in forecast)
     p_med = _percentile(prices, 50)
+    p_mean = sum(prices) / len(prices)
+    p_base = min(p_med, p_mean)
     p_peak = prices[-1]  # the day's actual peak — catches short spikes
-    spread = p_peak - p_med
-    engaged = spread / max(abs(p_med), 1e-6) >= PRICE_MIN_RELATIVE_SPREAD
-    return p_med + _PRICE_ENGAGE_FRACTION * spread, p_peak, p_med, engaged
+    spread = max(0.0, p_peak - p_base)
+    engaged = spread > _PRICE_FLAT_EPS
+    return p_base + _PRICE_ENGAGE_FRACTION * spread, p_peak, p_med, p_base, engaged
 
 
 def today_price_spread_and_median_c(
     forecast: tuple[tuple[float, float], ...] | None,
 ) -> tuple[float, float] | None:
-    """Today's (peak-minus-median spread, median), or None with no usable
+    """Today's (peak-minus-baseline spread, median), or None with no usable
     day-distribution — the same forecast-quality gate `_price_band_info` uses,
     for the same reason (see its docstring).
 
     Deliberately shares `_price_band_info` rather than recomputing the
-    median/peak separately, and deliberately returns BOTH numbers from one
-    call rather than offering two single-purpose functions: `compute()`'s
+    baseline/median/peak separately, and deliberately returns BOTH numbers from
+    one call rather than offering two single-purpose functions: `compute()`'s
     braking-band logic, the seasonal spread history, and the significance
     floor's auto mode (see `_resolve_absolute_floor_c`) must never read a
     different spread or median for the same cycle, and one function is what
@@ -507,8 +515,8 @@ def today_price_spread_and_median_c(
     band = _price_band_info(forecast)
     if band is None:
         return None
-    _, full, median, _ = band
-    return max(0.0, full - median), median
+    _, full, median, base, _ = band
+    return max(0.0, full - base), median
 
 
 # --- Price significance -----------------------------------------------------
@@ -734,13 +742,63 @@ def price_significance(
     return min(relative_significance, absolute_significance), reference_spread_c
 
 
-def _band_response(price: float, start: float, full: float, gamma: float) -> float:
-    """Convex 0..1 response of a price within the [start, full] band."""
+def seasonal_reference_price_c(history: PriceSpreadHistory) -> float | None:
+    """Rolling 30-day median daily price, or None during cold start.
+
+    Uses the same `PRICE_SIGNIFICANCE_COLD_START_DAYS` gate as the seasonal
+    spread reference so a brand-new install does not boost off a single day's
+    price level.
+    """
+    if len(history.daily_medians_c) < PRICE_SIGNIFICANCE_COLD_START_DAYS:
+        return None
+    return _percentile(sorted(history.daily_medians_c), 50)
+
+
+def _band_response(
+    price: float,
+    start: float,
+    full: float,
+    gamma: float,
+    *,
+    seasonal_reference_price_c: float | None = None,
+    seasonal_reference_spread_c: float | None = None,
+) -> float:
+    """Convex 0..1 response of a price within the [start, full] band.
+
+    When `seasonal_reference_price_c` is supplied (past cold start) and
+    `price` is ALREADY inside today's expensive band (`price > start`), a
+    historically extreme price (`>= 2x..4x` the 30-day level) boosts the
+    response smoothly toward 1.0 so broad expensive plateaus get decisive
+    braking without ever braking during today's cheap recharge hours.
+    """
     if full > start:
         ramp = (price - start) / (full - start)
     else:
         ramp = 1.0 if price >= start else 0.0
-    return _clamp(ramp, 0.0, 1.0) ** gamma
+    base_resp = _clamp(ramp, 0.0, 1.0) ** gamma
+    if seasonal_reference_price_c is not None and full > start and price > start:
+        level_ref = max(
+            abs(seasonal_reference_price_c),
+            0.5 * max(0.0, seasonal_reference_spread_c or 0.0),
+        )
+        if level_ref > 1e-6:
+            hist_boost = _clamp(
+                (price / level_ref - PRICE_HISTORICAL_BOOST_START_RATIO)
+                / (
+                    PRICE_HISTORICAL_BOOST_FULL_RATIO
+                    - PRICE_HISTORICAL_BOOST_START_RATIO
+                ),
+                0.0,
+                1.0,
+            )
+            entry_ramp = _clamp(
+                (price - start)
+                / (_PRICE_HISTORICAL_BOOST_ENTRY_FRACTION * (full - start)),
+                0.0,
+                1.0,
+            )
+            return max(base_resp, hist_boost * entry_ramp)
+    return base_resp
 
 
 def _lookahead_weighted_peak(
@@ -793,6 +851,9 @@ def _lookahead_response(
     full: float,
     gamma: float,
     lead_minutes: float,
+    *,
+    seasonal_reference_price_c: float | None = None,
+    seasonal_reference_spread_c: float | None = None,
 ) -> tuple[float, float | None]:
     """Pre-brake response from an upcoming spike, and how many hours until it.
 
@@ -806,7 +867,14 @@ def _lookahead_response(
     return _lookahead_weighted_peak(
         forecast,
         lead_minutes,
-        lambda price: _band_response(price, start, full, gamma),
+        lambda price: _band_response(
+            price,
+            start,
+            full,
+            gamma,
+            seasonal_reference_price_c=seasonal_reference_price_c,
+            seasonal_reference_spread_c=seasonal_reference_spread_c,
+        ),
     )
 
 
@@ -821,6 +889,45 @@ def _forecast_value_at(
                 return v0
             return v0 + (v1 - v0) * (t_h - t0) / (t1 - t0)
     return None
+
+
+def _weather_forecast_status(series: tuple[tuple[float, float], ...] | None) -> str:
+    """Coverage needed for interpolation, without extrapolating stale/future data."""
+    if not series:
+        return "missing"
+    if series[0][0] > 0.0:
+        return "missing_current_reference"
+    if series[-1][0] <= 0.0:
+        return "missing_future_coverage"
+    return "available"
+
+
+def _interpolated_weather_series(
+    series: tuple[tuple[float, float], ...] | None, lead_minutes: float,
+) -> tuple[tuple[float, float], ...]:
+    """Anchor weather at now and sample inside hourly intervals every five minutes.
+
+    Preserve original knots and the full horizon for tomorrow's daily-cycle
+    comparison. Never extend beyond the supplied forecast. Price forecasts stay
+    discrete: a tariff timestamp is a step, whereas weather varies between points.
+    """
+    if _weather_forecast_status(series) != "available":
+        return ()
+    now_value = _forecast_value_at(series, 0.0)
+    if now_value is None:
+        return ()
+    points = {t: v for t, v in series if t > 0.0}
+    points[0.0] = now_value
+    end = min(max(0.0, lead_minutes / 60.0), series[-1][0])
+    times = {i / 12.0 for i in range(1, int(end * 12.0 + 1e-9) + 1)}
+    # Include the midpoint (the weighted peak of a linear change) even for
+    # response windows that aren't multiples of the sampling interval.
+    times.update((end, end / 2.0))
+    for t in times:
+        value = _forecast_value_at(series, t)
+        if value is not None:
+            points[t] = value
+    return tuple(sorted(points.items()))
 
 
 def _term_preramp_c(
@@ -854,6 +961,7 @@ def _term_preramp_c(
     day while a front, which tomorrow does not repeat, still does. Where the
     forecast does not reach that far, the drop counts in full.
     """
+    series = _interpolated_weather_series(series, lead_minutes)
     if not series:
         return 0.0, None
     now_term_c = to_term_c(series[0][1])
@@ -868,7 +976,8 @@ def _term_preramp_c(
             tomorrow_t = _forecast_value_at(series, t_h + DAILY_CYCLE_H)
             if tomorrow_t is not None:
                 drop -= max(0.0, to_term_c(tomorrow_now) - to_term_c(tomorrow_t))
-        return max(0.0, drop)
+        # Interpolating identical daily slopes can leave floating-point dust.
+        return drop if drop > 1e-9 else 0.0
 
     magnitude, when_h = _lookahead_weighted_peak(
         tuple((t_h, (t_h, v)) for t_h, v in series),
@@ -905,6 +1014,7 @@ def _term_precool_c(
     Same constant-bias cancellation as `_term_preramp_c`: the "now" reference
     is the series' own first entry, not a live reading.
     """
+    series = _interpolated_weather_series(series, lead_minutes)
     if not series:
         return 0.0, None
     now_term_c = to_term_c(series[0][1])
@@ -970,6 +1080,7 @@ class HeuristicInputs:
     price_significance_factor: float = 1.0
     today_price_spread_c: float | None = None
     seasonal_reference_spread_c: float | None = None
+    seasonal_reference_price_c: float | None = None
     # Last cycle's `HeuristicResult.heating_hard_limit_engaged`, for
     # `resolve_heating_hard_limit_engaged`'s hysteresis. Threaded in by the
     # coordinator the same way `previous.price_braking` is; see that field's
@@ -1090,6 +1201,10 @@ class HeuristicResult:
     # True while the pre-ramp is deliberately holding the house above target.
     # Read by the learner, for the same reason `price_braking` is.
     weather_preramp_active: bool = False
+    weather_lookahead_reason: str = "output_override"
+    weather_lookahead_minutes: float = 0.0
+    outdoor_forecast_status: str = "not_evaluated"
+    wind_forecast_status: str = "not_evaluated"
     # Sun's own lookahead: backs heat off ahead of MORE sun arriving, the
     # mirror image of weather_preramp_c above. See `_term_precool_c`.
     sun_precool_c: float = 0.0
@@ -1097,6 +1212,9 @@ class HeuristicResult:
     # True while the pre-cool is deliberately holding the house below target.
     # Read by the learner, for the same reason `price_braking` is.
     sun_precool_active: bool = False
+    sun_precool_reason: str = "output_override"
+    solar_forecast_status: str = "not_evaluated"
+    sun_precool_lookahead_minutes: float = 0.0
     # Degrees of outdoor spoof from the vacation setback depth (user target
     # minus vacation-effective target). Zero when no plan is sagging the
     # house. See the module docstring's "Vacation feedforward" section.
@@ -1242,7 +1360,7 @@ def compute(inputs: HeuristicInputs, params: HeuristicParams) -> HeuristicResult
         if band is None:
             no_forecast = True
         else:
-            start, full, price_median, band_engaged = band
+            start, full, price_median, price_base, band_engaged = band
             price_forecast_band_start, price_forecast_band_full = start, full
             # Everything past this point is braking behaviour, not display —
             # stays gated on price_for_braking so a house with compensation
@@ -1251,9 +1369,22 @@ def compute(inputs: HeuristicInputs, params: HeuristicParams) -> HeuristicResult
                 price_band_start, price_band_full = start, full
                 price_flat_day = not band_engaged
                 if band_engaged:
-                    response_now = _band_response(price_for_braking, start, full, tier.gamma)
+                    response_now = _band_response(
+                        price_for_braking,
+                        start,
+                        full,
+                        tier.gamma,
+                        seasonal_reference_price_c=inputs.seasonal_reference_price_c,
+                        seasonal_reference_spread_c=inputs.seasonal_reference_spread_c,
+                    )
                     response_brake, brake_h = _lookahead_response(
-                        inputs.price_forecast, start, full, tier.gamma, lead_minutes
+                        inputs.price_forecast,
+                        start,
+                        full,
+                        tier.gamma,
+                        lead_minutes,
+                        seasonal_reference_price_c=inputs.seasonal_reference_price_c,
+                        seasonal_reference_spread_c=inputs.seasonal_reference_spread_c,
                     )
                     response_charge, charge_h = _lookahead_response(
                         inputs.price_forecast,
@@ -1261,18 +1392,20 @@ def compute(inputs: HeuristicInputs, params: HeuristicParams) -> HeuristicResult
                         full,
                         tier.gamma,
                         precharge_lead_minutes,
+                        seasonal_reference_price_c=inputs.seasonal_reference_price_c,
+                        seasonal_reference_spread_c=inputs.seasonal_reference_spread_c,
                     )
 
                     # Pre-charge and braking are mutually exclusive, chosen by
                     # the CURRENT price: if it is genuinely cheap now (at or
-                    # below the day's median) with a spike coming and the tier
+                    # below today's baseline) with a spike coming and the tier
                     # opts in, bank heat instead of cutting it. Pre-braking
                     # into a spike while the price is still cheap would just
                     # make the house cold for no saving.
                     precharge_ready = (
                         tier.precharge_c > 0.0
                         and response_charge > 0.0
-                        and price_for_braking <= price_median
+                        and price_for_braking <= price_base
                     )
                     if precharge_ready:
                         price_shift_c = -tier.precharge_c * response_charge
@@ -1391,6 +1524,8 @@ def compute(inputs: HeuristicInputs, params: HeuristicParams) -> HeuristicResult
     # dissipated before the gain lands rather than stacking with it. See
     # _term_precool_c.
     sun_precool_c = 0.0
+    sun_precool_raw_c = 0.0
+    sun_precool_before_room_c = 0.0
     sun_precool_in_min: float | None = None
     precool_lead_minutes = max(0.0, inputs.fall_minutes)
     if params.enable_weather_lookahead:
@@ -1426,6 +1561,7 @@ def compute(inputs: HeuristicInputs, params: HeuristicParams) -> HeuristicResult
                 lambda v: SOLAR_GAIN_C * v,
                 precool_lead_minutes,
             )
+            sun_precool_before_room_c = sun_precool_raw_c
             # Only the part of the coming sun gain that would carry indoor
             # past target is worth backing off for: a house already below
             # target has that much room to absorb the sun, so the deficit
@@ -1443,6 +1579,52 @@ def compute(inputs: HeuristicInputs, params: HeuristicParams) -> HeuristicResult
                 SOLAR_PRECOOL_MAX_C,
             )
             sun_precool_in_min = None if sun_h is None else sun_h * 60.0
+
+    outdoor_status = (
+        _weather_forecast_status(inputs.outdoor_forecast)
+        if params.enable_weather_lookahead else "disabled"
+    )
+    wind_status = (
+        _weather_forecast_status(inputs.wind_forecast_ms)
+        if params.enable_weather_lookahead and params.enable_wind_input else "disabled"
+    )
+    if not params.enable_weather_lookahead:
+        weather_reason = "disabled"
+    elif preramp_lead_minutes <= 0.0:
+        weather_reason = "no_response_window"
+    elif "available" not in (outdoor_status, wind_status):
+        weather_reason = "forecast_unavailable"
+    elif abs(weather_preramp_c) > WEATHER_PRERAMP_EPS_C:
+        weather_reason = "active"
+    elif weather_preramp_c < 0.0:
+        weather_reason = "below_activation_threshold"
+    else:
+        unfiltered_outdoor, _ = _term_preramp_c(
+            inputs.outdoor_forecast, lambda v: v, preramp_lead_minutes,
+        )
+        weather_reason = (
+            "daily_cycle_suppressed" if unfiltered_outdoor < 0.0
+            else "no_increasing_heat_demand"
+        )
+
+    solar_status = (
+        _weather_forecast_status(inputs.solar_forecast)
+        if params.enable_weather_lookahead and params.enable_solar_input else "disabled"
+    )
+    if not params.enable_weather_lookahead or not params.enable_solar_input:
+        sun_reason = "disabled"
+    elif abs(sun_precool_c) > WEATHER_PRERAMP_EPS_C:
+        sun_reason = "held" if inputs.sun_precool_hold_c >= sun_precool_c else "active"
+    elif sun_precool_c > 0.0:
+        sun_reason = "below_activation_threshold"
+    elif precool_lead_minutes <= 0.0:
+        sun_reason = "no_response_window"
+    elif solar_status != "available":
+        sun_reason = "forecast_unavailable"
+    elif sun_precool_before_room_c > 0.0 and sun_precool_raw_c <= 0.0:
+        sun_reason = "indoor_deficit"
+    else:
+        sun_reason = "no_increasing_solar_gain"
 
     compensated_outdoor_temp_c = _clamp(
         inputs.raw_outdoor_temp_c
@@ -1596,9 +1778,16 @@ def compute(inputs: HeuristicInputs, params: HeuristicParams) -> HeuristicResult
         weather_preramp_c=weather_preramp_c,
         weather_preramp_in_min=weather_preramp_in_min,
         weather_preramp_active=abs(weather_preramp_c) > WEATHER_PRERAMP_EPS_C,
+        weather_lookahead_reason=weather_reason,
+        weather_lookahead_minutes=preramp_lead_minutes,
+        outdoor_forecast_status=outdoor_status,
+        wind_forecast_status=wind_status,
         sun_precool_c=sun_precool_c,
         sun_precool_in_min=sun_precool_in_min,
         sun_precool_active=abs(sun_precool_c) > WEATHER_PRERAMP_EPS_C,
+        sun_precool_reason=sun_reason,
+        solar_forecast_status=solar_status,
+        sun_precool_lookahead_minutes=precool_lead_minutes,
     )
 
 

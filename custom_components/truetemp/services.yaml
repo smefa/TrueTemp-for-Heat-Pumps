@@ -141,6 +141,14 @@ reset_learning:
       selector:
         boolean:
 
+reset_response_time:
+  fields:
+    config_entry_id:
+      required: true
+      selector:
+        config_entry:
+          integration: truetemp
+
 vacation_plan_reorder:
   fields:
     config_entry_id:

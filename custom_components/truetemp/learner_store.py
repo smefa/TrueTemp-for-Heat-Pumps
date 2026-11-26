@@ -62,7 +62,7 @@ from typing import Any
 # package context and pre-registers the sibling modules in sys.modules.
 try:  # pragma: no cover - trivial import shim
     from .heuristic import PRICE_SPREAD_HISTORY_DAYS, PriceSpreadHistory
-    from .lag import BUFFER_SAMPLES, LagState
+    from .lag import BUFFER_SAMPLES, MAX_READINGS, LagReading, LagState
     from .learner import (
         MODEL_VERSION,
         N_BINS,
@@ -75,7 +75,12 @@ except ImportError:  # pragma: no cover - test path-load fallback
         PRICE_SPREAD_HISTORY_DAYS,
         PriceSpreadHistory,
     )
-    from lag import BUFFER_SAMPLES, LagState  # type: ignore[no-redef]
+    from lag import (  # type: ignore[no-redef]
+        BUFFER_SAMPLES,
+        MAX_READINGS,
+        LagReading,
+        LagState,
+    )
     from learner import (  # type: ignore[no-redef]
         MODEL_VERSION,
         N_BINS,
@@ -164,6 +169,13 @@ def serialize(
             "offsets_c": list(lag_state.offsets_c),
             "indoors_c": list(lag_state.indoors_c),
             "targets_c": list(lag_state.targets_c),
+            "readings": [
+                {"direction": r.direction, "minutes": r.minutes, "at_s": r.at_s}
+                for r in lag_state.readings
+            ],
+            "heating_type": lag_state.heating_type,
+            "sample_counter": lag_state.sample_counter,
+            "evaluated_through": lag_state.evaluated_through,
         },
     }
     if outdoor_reference is not None:
@@ -295,6 +307,30 @@ def outdoor_reference_from(data: Any) -> tuple[float, float] | None:
     if not (math.isfinite(value_c) and math.isfinite(at_s)):
         return None
     return value_c, at_s
+
+
+def _int(value: Any, default: int) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        return default
+    return value
+
+
+def _parse_readings(raw: Any) -> tuple[LagReading, ...]:
+    """Clean response readings, dropping malformed entries individually."""
+    if not isinstance(raw, list):
+        return ()
+    readings: list[LagReading] = []
+    for item in raw:
+        if not isinstance(item, dict) or item.get("direction") not in ("rise", "fall"):
+            continue
+        try:
+            minutes = float(item["minutes"])
+            at_s = float(item["at_s"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if math.isfinite(minutes) and minutes > 0 and math.isfinite(at_s):
+            readings.append(LagReading(item["direction"], minutes, at_s))
+    return tuple(readings[-2 * MAX_READINGS:])
 
 
 def deserialize(
@@ -438,6 +474,12 @@ def deserialize(
     lag_state = LagState()
     raw_lag = data.get("lag")
     if isinstance(raw_lag, dict):
+        # The readings are the valuable part (weeks of rare events) and are
+        # parsed independently of the sample buffer, so a corrupt buffer never
+        # costs them. Payloads written before readings existed have none.
+        readings = _parse_readings(raw_lag.get("readings"))
+        stored_type = raw_lag.get("heating_type")
+        heating_type = stored_type if isinstance(stored_type, str) else None
         offsets = _floats(raw_lag.get("offsets_c"), BUFFER_SAMPLES)
         indoors = _floats(raw_lag.get("indoors_c"), BUFFER_SAMPLES)
         targets = _floats(raw_lag.get("targets_c"), BUFFER_SAMPLES)
@@ -453,14 +495,22 @@ def deserialize(
             and math.isfinite(step_minutes)
             and step_minutes > 0
         ):
+            counter = _int(raw_lag.get("sample_counter"), len(indoors))
+            counter = max(counter, len(indoors))
+            evaluated = min(_int(raw_lag.get("evaluated_through"), -1), counter - 1)
             lag_state = LagState(
                 offsets_c=offsets,
                 indoors_c=indoors,
                 targets_c=targets,
                 step_minutes=step_minutes,
+                readings=readings,
+                heating_type=heating_type,
+                sample_counter=counter,
+                evaluated_through=evaluated,
             )
         else:
             _LOGGER.debug("Lag buffer discarded (learned table kept)")
+            lag_state = LagState(readings=readings, heating_type=heating_type)
 
     # Same "expendable, drop it on its own" treatment as the lag buffer just
     # above — see `_parse_price_spread_history`'s docstring for why losing it

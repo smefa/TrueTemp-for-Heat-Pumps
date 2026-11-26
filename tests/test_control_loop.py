@@ -158,7 +158,8 @@ def run(
         now += STEP_HOURS * 3600.0
 
         lag_state = lag.push(lag_state, offset, indoor, current_target)
-        lag_result = lag.estimate(lag_state, "radiators")
+        lag_state = lag.harvest(lag_state, "radiators", now)
+        lag_result = lag.estimate(lag_state, "radiators", now)
 
         manual_adjustment_c = 0.0
         if manual_recovery:
@@ -639,7 +640,8 @@ class TestLagMeasurementInTheLoop:
             indoor = house.advance(offset)
             now += STEP_HOURS * 3600.0
             lag_state = lag.push(lag_state, offset, indoor, target)
-            lag_result = lag.estimate(lag_state, "radiators")
+            lag_state = lag.harvest(lag_state, "radiators", now)
+            lag_result = lag.estimate(lag_state, "radiators", now)
             learner_state, result = learner.step(
                 learner_state,
                 learner.LearnerInputs(
@@ -663,38 +665,29 @@ class TestLagMeasurementInTheLoop:
         assert lag_result.rise_minutes >= 6 * STEP_MINUTES
 
     def test_a_slower_house_measures_a_longer_response(self):
-        """The invariant that actually matters downstream: a slab must end up
-        with a slower integrator and an earlier pre-brake than a radiator."""
+        """The invariant that matters downstream: a slab must end up with a
+        slower integrator and an earlier pre-brake than a radiator.
+
+        Driven by isolated scripted offset pulses spaced beyond the window. In
+        a free-running closed loop the controller's own follow-up moves cancel
+        most events (that is the point of discarding them), so the ordering is
+        only reliable when clean events actually occur.
+        """
 
         def measured(delay_steps: int) -> float:
-            house = House(curve_error_c=-2.0, delay_steps=delay_steps)
-            learner_state = learner.initial_state()
+            house = House(curve_error_c=-2.0, delay_steps=delay_steps, inertia=0.3)
             lag_state = lag.initial_state(STEP_MINUTES)
-            offset, now, target = 0.0, 0.0, 21.0
+            now = 0.0
             for i in range(1400):
-                if i % 48 == 0:
-                    target = 21.0 if target != 21.0 else 22.5
+                phase = i % 120
+                offset = -1.0 if 10 <= phase < 70 else 0.0
                 indoor = house.advance(offset)
                 now += STEP_HOURS * 3600.0
-                lag_state = lag.push(lag_state, offset, indoor, target)
-                lag_result = lag.estimate(lag_state, "radiators")
-                learner_state, result = learner.step(
-                    learner_state,
-                    learner.LearnerInputs(
-                        now_s=now,
-                        dt_hours=STEP_HOURS,
-                        indoor_temp_c=indoor,
-                        indoor_data_available=True,
-                        target_c=target,
-                        outdoor_temp_c=0.0,
-                        heating_hard_limit_engaged=False,
-                        is_active=True,
-                        price_braking=False,
-                        rise_hours=lag_result.rise_hours,
-                    ),
-                )
-                offset = result.offset_c
-            return lag.estimate(lag_state, "radiators").rise_minutes
+                lag_state = lag.push(lag_state, offset, indoor, 21.0)
+                lag_state = lag.harvest(lag_state, "radiators", now)
+            result = lag.estimate(lag_state, "radiators", now)
+            assert result.rise_measured
+            return result.rise_minutes
 
         assert measured(12) > measured(2)
 

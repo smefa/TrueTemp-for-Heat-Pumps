@@ -102,16 +102,24 @@ reason as above.
 ## Installation
 
 <a href="https://my.home-assistant.io/redirect/hacs_repository/?owner=smefa&repository=TrueTemp-for-Heat-Pumps&category=integration" target="_blank">
-  <img src="https://my.home-assistant.io/badges/hacs_repository.svg" alt="Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.">
+  <img src="https://my.home-assistant.io/badges/hacs_repository.svg" alt="Open your Home Assistant instance and open a repository inside the Marketplace.">
 </a>
 
-1. Open **HACS** in Home Assistant.
-2. Click the three dots in the top-right corner → **Custom repositories**.
-3. Add `https://github.com/smefa/TrueTemp-for-Heat-Pumps` with category **Integration**.
-4. Search for **TrueTemp** in HACS and install it.
-5. Restart Home Assistant.
-6. Go to **Settings → Devices & Services → Add Integration** and search for
-   **TrueTemp**.
+Home Assistant 2026.11 and later have the **Marketplace** built in, and it
+replaces HACS.
+
+1. Go to **Settings → Marketplace** in Home Assistant.
+2. The first time, read the notice and select **I understand the risks and agree**.
+3. Search for **TrueTemp**. If it isn't in the catalog, select **Add from link**
+   and enter `https://github.com/smefa/TrueTemp-for-Heat-Pumps`.
+4. Select **Install**. Integrations go straight to the setup flow, without a restart.
+5. Answer the questions below.
+
+Still on a Home Assistant version older than 2026.11? Add the repository to HACS
+as a custom repository (category **Integration**), then restart Home Assistant.
+
+Already installed TrueTemp through HACS? It moves to the Marketplace automatically
+when you update to 2026.11 and keeps receiving updates.
 
 You'll be asked four simple questions:
 
@@ -260,3 +268,8 @@ developer, see the [technical reference](docs/TECHNICAL.md). Built with Claude c
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+
+## Ubuntu development
+
+See [Ubuntu setup and validation](docs/ubuntu.md) for native tools, tests and local packaging.

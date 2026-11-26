@@ -437,10 +437,17 @@
     },
     "reset_learning": {
       "name": "Reset learned data",
-      "description": "Erase what this zone has learned (offset table and response-time estimate) and start over. Use after replacing the outdoor or indoor sensor. Settings and schedules are kept. This cannot be undone.",
+      "description": "Erase what this zone has learned (offset table, response-time estimate and daily pattern) and start over. Use after replacing the outdoor or indoor sensor. Settings and schedules are kept. This cannot be undone.",
       "fields": {
         "config_entry_id": { "name": "Zone", "description": "Which TrueTemp zone to reset." },
         "current_band_only": { "name": "Current band only", "description": "Reset only the outdoor-temperature band the zone is in now. Other bands, the shared offset and the response-time estimate are kept." }
+      }
+    },
+    "reset_response_time": {
+      "name": "Reset response time",
+      "description": "Forget the measured response-time readings and fall back to the heating-type default. The learned offsets are kept. Use after changing emitters or the pump, or if the shown response time looks wrong.",
+      "fields": {
+        "config_entry_id": { "name": "Zone", "description": "Which TrueTemp zone to reset." }
       }
     },
     "vacation_plan_set": {

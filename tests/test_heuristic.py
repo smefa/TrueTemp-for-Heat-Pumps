@@ -1604,6 +1604,146 @@ class TestComputeAppliesSignificanceTaper:
         assert result.seasonal_reference_spread_c == pytest.approx(0.87)
 
 
+class TestSplitPriceModel:
+    """Split model: within-day `min(median, mean)` baseline decides *when*
+    to brake (escaping long >=12h plateaus without braking on cheap nights),
+    while the 30-day rolling price level boosts *how hard* to brake during
+    today's expensive hours when prices are historically extreme."""
+
+    @staticmethod
+    def _plateau_forecast():
+        # 8h cheap night (2.0), 13h expensive daytime plateau (4.5..4.9), 3h evening (2.5).
+        # Median sits on the plateau (~4.5), so (peak - median)/median < 20%,
+        # while mean (~3.55) sits well below the plateau.
+        prices = [2.0] * 8 + [4.5] * 12 + [4.9] + [2.5] * 3
+        return tuple((float(i), p) for i, p in enumerate(prices))
+
+    def test_long_plateau_engages_via_min_median_mean(self):
+        forecast = self._plateau_forecast()
+        spread, median = heuristic.today_price_spread_and_median_c(forecast)
+        assert median == pytest.approx(4.5)
+        assert spread > 1.0  # peak (4.9) - mean (~3.58), not peak - median (0.4)
+
+        result = compute(
+            make_inputs(
+                current_price=4.5,
+                price_data_available=True,
+                price_forecast=forecast,
+            ),
+            make_params(enable_price_compensation=True, cold_caution="low"),
+        )
+        assert "flat day" not in result.reason
+        assert result.price_braking is True
+        assert result.price_response > 0.0
+
+    def test_seasonal_reference_price_respects_cold_start(self):
+        short = heuristic.PriceSpreadHistory(
+            daily_spreads_c=(0.5,) * 4,
+            daily_medians_c=(0.3,) * 4,
+        )
+        assert heuristic.seasonal_reference_price_c(short) is None
+
+        ready = heuristic.PriceSpreadHistory(
+            daily_spreads_c=(0.5,) * 5,
+            daily_medians_c=(0.1, 0.2, 0.3, 0.4, 1.0),
+        )
+        assert heuristic.seasonal_reference_price_c(ready) == pytest.approx(0.3)
+
+    def test_historical_boost_strengthens_plateau_without_braking_cheap_night(self):
+        forecast = self._plateau_forecast()
+        # Mid-plateau (4.5 SEK) vs 30d rolling median 0.30 SEK (> 4x):
+        without_boost = compute(
+            make_inputs(
+                current_price=4.5,
+                price_data_available=True,
+                price_forecast=forecast,
+                seasonal_reference_price_c=None,
+                seasonal_reference_spread_c=0.8,
+            ),
+            make_params(enable_price_compensation=True, cold_caution="low"),
+        )
+        with_boost = compute(
+            make_inputs(
+                current_price=4.5,
+                price_data_available=True,
+                price_forecast=forecast,
+                seasonal_reference_price_c=0.30,
+                seasonal_reference_spread_c=0.8,
+            ),
+            make_params(enable_price_compensation=True, cold_caution="low"),
+        )
+        assert with_boost.price_response > without_boost.price_response
+        assert with_boost.price_response == pytest.approx(1.0)
+
+        # Cheap night hour (2.0 SEK): STILL > 4x the 0.30 SEK 30d median,
+        # yet must NOT brake (and must not pre-brake when spike is far away).
+        night_forecast = tuple((float(i - 2), p) for i, (_, p) in enumerate(forecast))
+        night_result = compute(
+            make_inputs(
+                current_price=2.0,
+                price_data_available=True,
+                price_forecast=night_forecast,
+                fall_minutes=60.0,
+                seasonal_reference_price_c=0.30,
+                seasonal_reference_spread_c=0.8,
+            ),
+            make_params(enable_price_compensation=True, cold_caution="low"),
+        )
+        assert night_result.price_braking is False
+        assert night_result.price_response == 0.0
+
+    def test_historical_boost_is_currency_invariant(self):
+        forecast_sek = self._plateau_forecast()
+        forecast_ore = tuple((t, p * 100.0) for t, p in forecast_sek)
+        res_sek = compute(
+            make_inputs(
+                current_price=4.2,
+                price_data_available=True,
+                price_forecast=forecast_sek,
+                seasonal_reference_price_c=0.8,
+                seasonal_reference_spread_c=1.0,
+            ),
+            make_params(enable_price_compensation=True, cold_caution="low"),
+        )
+        res_ore = compute(
+            make_inputs(
+                current_price=420.0,
+                price_data_available=True,
+                price_forecast=forecast_ore,
+                seasonal_reference_price_c=80.0,
+                seasonal_reference_spread_c=100.0,
+            ),
+            make_params(enable_price_compensation=True, cold_caution="low"),
+        )
+        assert res_ore.price_response == pytest.approx(res_sek.price_response)
+        assert res_ore.price_adjustment_c == pytest.approx(res_sek.price_adjustment_c)
+
+    def test_historical_boost_guards_zero_and_negative_history(self):
+        forecast = self._plateau_forecast()
+        # Both reference price and spread are zero: no ZeroDivisionError, no boost.
+        zero_ref = compute(
+            make_inputs(
+                current_price=4.5,
+                price_data_available=True,
+                price_forecast=forecast,
+                seasonal_reference_price_c=0.0,
+                seasonal_reference_spread_c=0.0,
+            ),
+            make_params(enable_price_compensation=True, cold_caution="low"),
+        )
+        no_ref = compute(
+            make_inputs(
+                current_price=4.5,
+                price_data_available=True,
+                price_forecast=forecast,
+                seasonal_reference_price_c=None,
+                seasonal_reference_spread_c=0.0,
+            ),
+            make_params(enable_price_compensation=True, cold_caution="low"),
+        )
+        assert zero_ref.price_response == pytest.approx(no_ref.price_response)
+
+
 # --- Weather lookahead ------------------------------------------------------
 
 _lookahead_weighted_peak = heuristic._lookahead_weighted_peak
@@ -2098,3 +2238,191 @@ class TestSunPreCoolHold:
             lookahead_params(enable_solar_input=False),
         )
         assert result.sun_precool_c == 0.0
+
+
+class TestWeatherForecastInterpolation:
+    def test_hourly_cold_front_inside_short_window_is_not_missed(self):
+        result = compute(
+            make_inputs(outdoor_forecast=((0.0, 0.0), (1.0, -4.0)), rise_minutes=45.0),
+            lookahead_params(),
+        )
+        # A linear 4 C/h drop, weighted by (1-t/0.75), peaks halfway
+        # through the response window: 4 * 0.375 * 0.5 = 0.75 C.
+        assert result.outdoor_preramp_c == pytest.approx(-0.75)
+        assert result.weather_preramp_in_min == pytest.approx(22.5)
+        assert result.weather_lookahead_reason == "active"
+
+    def test_reference_is_interpolated_now_not_the_previous_hour(self):
+        result = compute(
+            make_inputs(
+                outdoor_forecast=((-0.5, 0.0), (0.5, -4.0), (1.5, -8.0)),
+                rise_minutes=45.0,
+            ),
+            lookahead_params(),
+        )
+        # Same slope as the previous case, with now halfway between knots.
+        assert result.outdoor_preramp_c == pytest.approx(-0.75)
+
+    def test_forecast_bias_cancels_after_interpolation(self):
+        values = []
+        for bias in (-5.0, 0.0, 5.0):
+            result = compute(
+                make_inputs(
+                    outdoor_forecast=((-0.5, bias), (0.5, bias - 4), (1.5, bias - 8)),
+                    rise_minutes=45.0,
+                ),
+                lookahead_params(),
+            )
+            values.append(result.outdoor_preramp_c)
+        assert values == pytest.approx([-0.75] * 3)
+
+    def test_daily_cycle_is_compared_from_interpolated_now(self):
+        series = ((-0.5, 0.0), (0.5, -4.0), (1.5, -8.0),
+                  (23.5, 0.0), (24.5, -4.0), (25.5, -8.0))
+        result = compute(
+            make_inputs(outdoor_forecast=series, rise_minutes=45.0), lookahead_params(),
+        )
+        assert result.outdoor_preramp_c == 0.0
+        assert result.weather_lookahead_reason == "daily_cycle_suppressed"
+
+    def test_does_not_extrapolate_beyond_forecast_end(self):
+        series = heuristic._interpolated_weather_series(((0.0, 0.0), (0.25, -2.0)), 45)
+        assert series[0] == (0.0, 0.0)
+        assert series[-1] == (0.25, -2.0)
+
+    def test_wind_between_hourly_knots_also_reaches_short_window(self):
+        result = compute(
+            make_inputs(wind_forecast_ms=((0.0, 0.0), (1.0, 10.0)), rise_minutes=45),
+            lookahead_params(enable_wind_input=True),
+        )
+        assert result.wind_preramp_c < 0.0
+
+    def test_solar_between_hourly_knots_reaches_short_window(self):
+        result = compute(
+            make_inputs(solar_forecast=((0.0, 0.0), (1.0, 1.0)), fall_minutes=45),
+            lookahead_params(enable_solar_input=True),
+        )
+        assert result.sun_precool_c > 0.0
+
+    def test_price_lookahead_keeps_discrete_tariff_steps(self):
+        magnitude, when = heuristic._lookahead_response(
+            ((0.0, 1.0), (1.0, 5.0)), 2.0, 5.0, 1.0, 45.0,
+        )
+        assert magnitude == 0.0
+        assert when is None
+
+
+class TestWeatherLookaheadDiagnostics:
+    @pytest.mark.parametrize(("series", "status"), [
+        (None, "missing"),
+        (((0.25, -2.0), (1.25, -4.0)), "missing_current_reference"),
+        (((-1.0, 2.0), (0.0, 0.0)), "missing_future_coverage"),
+    ])
+    def test_missing_coverage_is_reported_without_extrapolating(self, series, status):
+        result = compute(
+            make_inputs(outdoor_forecast=series, rise_minutes=45), lookahead_params(),
+        )
+        assert result.outdoor_forecast_status == status
+        assert result.weather_lookahead_reason == "forecast_unavailable"
+        assert result.weather_preramp_c == 0.0
+        assert result.weather_lookahead_minutes == 45
+
+    def test_small_correction_is_distinguished_from_no_demand(self):
+        result = compute(
+            make_inputs(outdoor_forecast=((0.0, 0.0), (1.0, -0.4)), rise_minutes=45),
+            lookahead_params(),
+        )
+        assert result.weather_lookahead_reason == "below_activation_threshold"
+        assert result.weather_preramp_c < 0.0
+        assert not result.weather_preramp_active
+
+    def test_flat_forecast_reports_no_increasing_demand(self):
+        result = compute(
+            make_inputs(outdoor_forecast=((0.0, 1.0), (1.0, 1.0))), lookahead_params(),
+        )
+        assert result.weather_lookahead_reason == "no_increasing_heat_demand"
+        assert result.outdoor_forecast_status == "available"
+
+    def test_disabled_and_zero_response_window_have_distinct_reasons(self):
+        assert compute(make_inputs(), make_params()).weather_lookahead_reason == "disabled"
+        result = compute(make_inputs(rise_minutes=0.0), lookahead_params())
+        assert result.weather_lookahead_reason == "no_response_window"
+
+    def test_partial_outdoor_failure_does_not_hide_working_wind_forecast(self):
+        result = compute(
+            make_inputs(wind_forecast_ms=((0.0, 0.0), (1.0, 20.0)), rise_minutes=45),
+            lookahead_params(enable_wind_input=True),
+        )
+        assert result.outdoor_forecast_status == "missing"
+        assert result.wind_forecast_status == "available"
+        assert result.weather_lookahead_reason == "active"
+
+    def test_output_override_does_not_claim_weather_is_acting(self):
+        result = compute(make_inputs(raw_outdoor_temp_c=22.0), lookahead_params())
+        assert result.weather_lookahead_reason == "output_override"
+        assert result.outdoor_forecast_status == "not_evaluated"
+
+
+class TestSolarLookaheadDiagnostics:
+    def test_disabled_inputs_are_not_reported_as_missing(self):
+        result = compute(make_inputs(), make_params())
+        assert result.outdoor_forecast_status == "disabled"
+        assert result.wind_forecast_status == "disabled"
+        assert result.solar_forecast_status == "disabled"
+        assert result.sun_precool_reason == "disabled"
+
+    @pytest.mark.parametrize("field", ["wind_forecast_ms", "solar_forecast"])
+    def test_future_only_forecasts_are_reported(self, field):
+        result = compute(
+            make_inputs(**{field: ((0.25, 0.0), (1.25, 10.0))}),
+            lookahead_params(enable_wind_input=True, enable_solar_input=True),
+        )
+        status = (result.wind_forecast_status if field == "wind_forecast_ms"
+                  else result.solar_forecast_status)
+        assert status == "missing_current_reference"
+        assert result.wind_preramp_c == 0.0
+        assert result.sun_precool_c == 0.0
+
+    @pytest.mark.parametrize(("forecast", "reason"), [
+        (None, "forecast_unavailable"),
+        (((0.0, 0.0), (1.0, 0.0)), "no_increasing_solar_gain"),
+        (((0.0, 0.0), (1.0, 0.01)), "below_activation_threshold"),
+        (((0.0, 0.0), (1.0, 1.0)), "active"),
+    ])
+    def test_solar_reasons(self, forecast, reason):
+        result = compute(
+            make_inputs(solar_forecast=forecast, fall_minutes=45),
+            lookahead_params(enable_solar_input=True),
+        )
+        assert result.sun_precool_reason == reason
+        assert result.sun_precool_lookahead_minutes == 45
+
+    def test_indoor_deficit_explains_cancelled_precool(self):
+        result = compute(
+            make_inputs(indoor_temp_c=15.0, solar_forecast=((0.0, 0.0), (1.0, 1.0))),
+            lookahead_params(enable_solar_input=True),
+        )
+        assert result.sun_precool_c == 0.0
+        assert result.sun_precool_reason == "indoor_deficit"
+
+    def test_hold_is_reported_even_without_a_forecast(self):
+        result = compute(
+            make_inputs(sun_precool_hold_c=1.0), lookahead_params(enable_solar_input=True),
+        )
+        assert result.sun_precool_c == 1.0
+        assert result.sun_precool_reason == "held"
+        assert result.solar_forecast_status == "missing"
+
+
+def test_partial_tomorrow_coverage_does_not_extrapolate_daily_cycle():
+    result = compute(
+        make_inputs(
+            outdoor_forecast=((0.0, 0.0), (1.0, -4.0), (24.0, 0.0), (24.5, -2.0)),
+            rise_minutes=45,
+        ),
+        lookahead_params(),
+    )
+    # Tomorrow covers only the first half-hour. That part cancels; the
+    # uncovered part retains the existing full-drop fallback, without inventing
+    # tomorrow's temperatures or exceeding the unfiltered correction.
+    assert -0.75 <= result.weather_preramp_c < 0.0

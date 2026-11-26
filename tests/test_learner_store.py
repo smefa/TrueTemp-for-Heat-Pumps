@@ -75,6 +75,13 @@ def populated_lag() -> lag.LagState:
         indoors_c=tuple(20.0 + 0.01 * i for i in range(40)),
         targets_c=tuple(21.0 for _ in range(40)),
         step_minutes=15.0,
+        readings=(
+            lag.LagReading("rise", 225.0, 1_000_000.0),
+            lag.LagReading("fall", 180.0, 1_000_500.0),
+        ),
+        heating_type="underfloor",
+        sample_counter=140,
+        evaluated_through=130,
     )
 
 
@@ -125,6 +132,41 @@ class TestRoundTrip:
         assert restored.shared_offset_c == state.shared_offset_c
         assert restored_lag == lag_state
         assert restored_price_history == price_history
+
+    def test_old_payload_without_readings_loads_with_none(self):
+        payload = store.serialize(populated_state(), populated_lag())
+        for key in ("readings", "heating_type", "sample_counter", "evaluated_through"):
+            payload["lag"].pop(key)
+        _, restored_lag, _ = store.deserialize(payload)
+        assert restored_lag.readings == ()
+        assert restored_lag.heating_type is None
+        assert restored_lag.sample_counter == 40
+        assert restored_lag.evaluated_through == -1
+        assert len(restored_lag.indoors_c) == 40
+
+    def test_corrupt_readings_are_dropped_individually(self):
+        payload = store.serialize(populated_state(), populated_lag())
+        payload["lag"]["readings"] = [
+            {"direction": "rise", "minutes": 100.0, "at_s": 5.0},
+            {"direction": "sideways", "minutes": 100.0, "at_s": 5.0},
+            {"direction": "fall", "minutes": "x", "at_s": 5.0},
+            {"direction": "fall", "minutes": -4.0, "at_s": 5.0},
+            "junk",
+        ]
+        _, restored_lag, _ = store.deserialize(payload)
+        assert restored_lag.readings == (lag.LagReading("rise", 100.0, 5.0),)
+        payload["lag"]["readings"] = "not a list"
+        _, restored_lag, _ = store.deserialize(payload)
+        assert restored_lag.readings == ()
+
+    def test_readings_survive_a_corrupt_sample_buffer(self):
+        payload = store.serialize(populated_state(), populated_lag())
+        payload["lag"]["indoors_c"] = ["bad"]
+        restored, restored_lag, _ = store.deserialize(payload)
+        assert restored.bins == populated_state().bins
+        assert restored_lag.indoors_c == ()
+        assert restored_lag.readings == populated_lag().readings
+        assert restored_lag.heating_type == "underfloor"
 
     def test_payload_is_json_serializable(self):
         """It goes through homeassistant's Store, which is JSON on disk."""

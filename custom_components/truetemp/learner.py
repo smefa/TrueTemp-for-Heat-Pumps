@@ -604,6 +604,10 @@ def effective_hold_offset(bins: tuple[OutdoorBin, ...], index: int) -> float:
 FREEZE_REASON_COMPENSATION_OFF = "compensation is off, so nothing is actually being applied"
 
 
+# The first step after a restart or reset has no previous step to measure from.
+FREEZE_REASON_NO_ELAPSED_TIME = "no elapsed time since the last step"
+
+
 def _freeze_reason(inputs: LearnerInputs, state: LearnerState) -> str | None:
     """Why learning must not advance this cycle, or None to proceed.
 
@@ -643,7 +647,7 @@ def _freeze_reason(inputs: LearnerInputs, state: LearnerState) -> str | None:
         remaining = (state.holdoff_until_s - inputs.now_s) / 60.0
         return f"waiting {remaining:.0f} min for the last change to reach the room"
     if inputs.dt_hours <= 0.0:
-        return "no elapsed time since the last step"
+        return FREEZE_REASON_NO_ELAPSED_TIME
     return None
 
 

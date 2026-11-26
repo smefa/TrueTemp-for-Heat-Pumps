@@ -52,6 +52,14 @@ from .const import (
     CONF_OUTPUT_NUMBER_ENTITY,
     DIAGNOSTICS_HISTORY_DAYS,
 )
+from .daily_pattern import (
+    CONFIDENCE_Z,
+    FF_CAP_C,
+    FF_GAIN,
+    MEMORY_DAYS,
+    MIN_DAYS,
+    to_dict as daily_pattern_to_dict,
+)
 from .data_logger import async_read_recent_records
 from .heuristic import (
     COLD_CAUTIONS,
@@ -64,7 +72,10 @@ from .heuristic import (
 from .lag import (
     EVENT_MIN_MOVE_C,
     MAX_LAG_MINUTES,
-    MIN_EVENTS,
+    BLEND_K,
+    FLOOR_FRACTION,
+    MAX_READINGS,
+    READING_MAX_AGE_S,
     MIN_RESPONSE_C,
     RESPONSE_FRACTION,
     TARGET_STEP_C,
@@ -193,7 +204,17 @@ async def async_get_config_entry_diagnostics(
             "latest": asdict(lag) if lag is not None else None,
             "buffer_samples": len(coordinator.lag_state.indoors_c),
             "step_minutes": coordinator.lag_state.step_minutes,
+            "readings": [asdict(r) for r in coordinator.lag_state.readings],
             "fallback_minutes": fallback_minutes(coordinator.heating_type),
+        },
+        # Shadow only: learned and scored, never added to the output.
+        "daily_pattern": {
+            "latest": (
+                asdict(coordinator.daily_pattern_result)
+                if coordinator.daily_pattern_result is not None
+                else None
+            ),
+            "state": daily_pattern_to_dict(coordinator.daily_pattern_state),
         },
         # Resolved constants, so a diagnostics file is self-describing without
         # needing the matching source checkout.
@@ -206,11 +227,19 @@ async def async_get_config_entry_diagnostics(
             "solar_gain_c": SOLAR_GAIN_C,
             "wind_gain_c_per_ms": WIND_GAIN_C_PER_MS,
             "lag_max_minutes": MAX_LAG_MINUTES,
-            "lag_min_events": MIN_EVENTS,
+            "lag_blend_k": BLEND_K,
+            "lag_floor_fraction": FLOOR_FRACTION,
+            "lag_max_readings": MAX_READINGS,
+            "lag_reading_max_age_s": READING_MAX_AGE_S,
             "lag_event_min_move_c": EVENT_MIN_MOVE_C,
             "lag_min_response_c": MIN_RESPONSE_C,
             "lag_response_fraction": RESPONSE_FRACTION,
             "lag_target_step_c": TARGET_STEP_C,
+            "daily_pattern_memory_days": MEMORY_DAYS,
+            "daily_pattern_min_days": MIN_DAYS,
+            "daily_pattern_confidence_z": CONFIDENCE_Z,
+            "daily_pattern_gain": FF_GAIN,
+            "daily_pattern_cap_c": FF_CAP_C,
             "price_tier": asdict(tier),
             "price_tiers": {name: asdict(t) for name, t in PRICE_TIERS.items()},
             "cold_caution": asdict(caution),

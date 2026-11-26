@@ -97,7 +97,13 @@ whatever the target is at that moment.
 
 An integral controller that ignores dead time oscillates, so TrueTemp
 measures two response times from your own data by correlating what it applied
-against what the house did:
+against what the house did. Only clean, full-window events count: a reading is
+taken when an offset or comfort-target step is followed by a complete six-hour
+window with no opposite action in it and a steady target. Truncated windows are
+discarded, because in a closed loop the controller moves the offset every
+15-60 minutes and a short window would measure that cadence rather than the
+house. A second step the same way before the response finishes is treated as a
+continuation, not a second reading.
 
 | | What it is | Used for |
 | --- | --- | --- |
@@ -112,6 +118,36 @@ stored heat afterward — and the measured figure conflates both. Both are on
 `sensor.<name>_status` in plain minutes, and they say whether they are measured
 yet or still using the default for your emitter type.
 
+Clean readings are remembered per direction (up to 20, for at most 8 weeks, with
+their timestamps) and survive sensor gaps, heating pauses and restarts. The
+published value is a blend, not a switch: `default + w * (median - default)`
+with `w = n / (n + 3)` for `n` readings, so one reading nudges it (default 90,
+one reading of 225 gives about 124) and three move it further (about 158). It
+is never held below 50% of the emitter-type default, which bounds the damage a
+bad reading can do. With no readings the value is exactly the default. Changing
+the heating type clears the readings, since they described a different house.
+The remaining limit is that closed-loop data is imperfect; the clean-window
+rule, the blend and the floor are mitigations, not a cure.
+
+### It watches for a daily pattern (shadow mode)
+
+Feedback is always late for something that happens at the same clock time
+every day, such as an evening that is usually too warm. TrueTemp learns the
+room's typical warmth for each hour of the day (local time) from the steps the
+learner itself learns from, so pauses, price braking, pre-ramps and sun are
+left out. A slow three-day average is removed first and the 24 hours are
+centred, so the pattern only describes the shape of the day; the overall level
+stays the learner's job. Each hour forgets on a two-week horizon and is trusted
+only after seven days of samples and when its shape is clearly larger than its
+own day-to-day scatter. A house without a daily rhythm never trusts any hour.
+
+This is shadow mode: nothing is added to the output. TrueTemp reports the
+offset it *would* add now, aimed at the hour the heat would arrive (now plus
+the response time), capped at ±2.0 °C, and scores how much of the room's
+swing around its own level the pattern would have removed. The score assumes
+perfect timing, so it is an upper bound. It is cleared by
+`truetemp.reset_learning` and kept by `truetemp.reset_response_time`.
+
 ### It knows when the pump has run out
 
 Below some outdoor temperature the pump is flat out and more spoofing buys
@@ -124,9 +160,17 @@ where resistive backup heat cuts in.
 
 ## Setup
 
-1. Add this repository to HACS as a custom repository (category: Integration).
-2. Restart Home Assistant.
-3. Settings → Devices & Services → Add Integration → **TrueTemp**.
+1. On Home Assistant 2026.11 and later, open **Settings → Marketplace**, accept the
+   notice on first use, search for **TrueTemp** (or select **Add from link** and
+   enter `https://github.com/smefa/TrueTemp-for-Heat-Pumps`), then select **Install**.
+   Integrations go straight to the setup flow, without a restart.
+2. On older versions, add the repository to HACS as a custom repository (category:
+   Integration) and restart Home Assistant. Then go to Settings → Devices & Services
+   → Add Integration → **TrueTemp**.
+
+The Marketplace replaces HACS from 2026.11. Installs made through HACS migrate
+automatically and keep receiving updates. Updates appear under Settings → Updates
+and still need a restart.
 
 Four questions:
 
@@ -260,6 +304,8 @@ remaining two. If which sensors are contributing changes between cycles (one
 drops out or comes back), that step in the aggregate is not a real
 temperature change, so TrueTemp freezes learning and drops the response-lag
 buffer for exactly one cycle rather than reading it as drift.
+The clean readings already collected are kept through any such drop (and through
+heating pauses); they expire only after eight weeks.
 
 Three Repairs distinguish what's wrong, at different severities:
 
@@ -299,6 +345,13 @@ Three properties keep it from becoming another thing to tune:
 - **One-sided.** It only ever asks for *more* heat. Easing off ahead of a
   forecast warm-up would trade comfort against a forecast that might be wrong,
   with no saving attached, so it is not done.
+- **Interpolated weather.** Hourly temperature, wind and solar forecast points
+  are interpolated at the current time and sampled every five minutes within
+  the response window (including its midpoint). This lets a 45-minute response
+  window anticipate changes between hourly timestamps. Original forecast knots
+  are retained; values are never extrapolated beyond the forecast. A series
+  must cover both now and a future time. Price forecasts retain their discrete
+  tariff steps.
 - **Self-cancelling.** The push is the difference between the forecast now and
   the forecast later, so it decays to zero as the change arrives. It is also
   measured against the forecast's *own* current value, never your outdoor
@@ -469,8 +522,8 @@ collection, are held during the pause and recovery, then for one measured
 heating rise time (bounded to 15 minutes–6 hours) after recovery ends.
 Deadlines do not continually extend if the house stays cold. The next learning
 sample is also protected when a pause ends between learning ticks.
-Previously measured response times are retained while clean event history
-rebuilds, and replaced independently as new rise/fall measurements become available.
+Stored response-time readings are unaffected by the pause, and new rise/fall
+readings are added independently as clean windows complete.
 
 After use, the existing status sensor exposes `heating_paused`,
 `heating_pause_remaining_minutes`, `heating_pause_learning_frozen`,
@@ -511,6 +564,13 @@ amount of saving crosses it.
 Braking starts one wind-down time before an expensive hour and, on Savings
 first, heat is banked one response time before it — because heat has to have
 *arrived*, not merely be on its way.
+
+Today's braking band is anchored to `min(median, mean)` rather than the median
+alone so a long daytime plateau (12+ expensive hours) cannot pull the baseline
+onto the plateau itself while normal single-spike days stay unchanged. Once
+the price is inside today's expensive band, if it is also far above the 30-day
+rolling median (`2×–4×`), braking response ramps straight toward full
+authority without ever braking during today's cheap recharge hours.
 
 ---
 
@@ -595,8 +655,8 @@ plan":
 
 `truetemp.reset_learning` (`config_entry_id`) is separate and deliberately has
 no card or entity: run it from Developer Tools → Actions after replacing the
-outdoor or indoor sensor. It resets the offset table and the lag buffer to a
-cold start with all bands and the shared learned offset at 0 C, and saves
+outdoor or indoor sensor. It resets the offset table, the lag buffer, the
+response-time readings and the daily pattern to a cold start with all bands and the shared learned offset at 0 C, and saves
 immediately; the price-spread history is kept. Normal learning and transient
 adjustments can move the recommended output away from zero after the reset.
 With `current_band_only: true` it resets only the band the outdoor temperature
@@ -605,6 +665,12 @@ bands, the shared offset and the lag buffer stay. The reset band starts at a
 combined learned offset of 0 C at its centre, cancelling its share of the shared
 offset instead of inheriting neighbouring bands. Normal blending between band
 centres still applies, and learning resumes from that starting point.
+
+`truetemp.reset_response_time` (`config_entry_id`) clears only the response-time
+readings and the sample buffer, saves immediately and refreshes. Offsets, bands
+and price history are untouched; the response and wind-down times return to the
+emitter-type defaults until new clean readings arrive. Use it after a change to
+the heating system that makes the old readings misleading.
 
 `vacation_plan_set` runs the same overlap check as the options flow and
 raises a translated `ServiceValidationError` (readable in the Developer
@@ -692,9 +758,16 @@ Indoor is the exception with more than one issue key — see
 | `weather_preramp_c` | The two above, summed and clamped to a shared 3 °C budget — the number that actually reaches the published value. `disabled` if the lookahead is off. |
 | `weather_preramp_in_min` | Minutes until the forecast change currently driving the pre-ramp. `disabled` if the lookahead is off. |
 | `weather_preramp_active` | `True` while the pre-ramp is deliberately holding the house above target — tells the learner to freeze, exactly as `price_braking` does in the other direction. |
+| `weather_lookahead_reason` | Why weather anticipation is active or inactive: `disabled`, `no_response_window`, `forecast_unavailable`, `active`, `below_activation_threshold`, `daily_cycle_suppressed`, or `no_increasing_heat_demand`. `output_override` means an early output override prevented evaluation. A correction below the 0.2 °C activation threshold still contributes to the output; the threshold controls reporting and learning freezes. |
+| `weather_lookahead_minutes` | Response window used for outdoor/wind anticipation, independent of the price-saving preset. |
+| `outdoor_forecast_status` | Interpolation coverage: `available`, `missing`, `missing_current_reference`, or `missing_future_coverage`; `disabled` when lookahead is off; `not_evaluated` on an early output override. |
+| `wind_forecast_status` | Same coverage states for wind; `disabled` when the wind input is off. |
 | `sun_precool_c` | Anticipatory pull-back (≥ 0) from forecast gaining sun, timed off the measured fall time. `disabled` if the lookahead is off; zero if the sun input is off. |
 | `sun_precool_in_min` | Minutes until the forecast sun increase currently driving the pre-cool. `disabled` if the lookahead is off. |
 | `sun_precool_active` | `True` while the pre-cool is deliberately holding the house below target — tells the learner to freeze, same mechanism as `weather_preramp_active` in the opposite direction. |
+| `sun_precool_reason` | Solar anticipation reason: `disabled`, `active`, `held`, `below_activation_threshold`, `no_response_window`, `forecast_unavailable`, `indoor_deficit`, or `no_increasing_solar_gain`; `output_override` on an early output override. |
+| `solar_forecast_status` | Same interpolation coverage states as outdoor; `disabled` when solar or lookahead is off. |
+| `sun_precool_lookahead_minutes` | Solar anticipation window, based on the fall time rather than the weather preheat rise time. |
 | `wind_speed_ms` | Wind speed read from the weather entity's forecast. |
 | `cloud_coverage_pct` | Cloud cover read from the weather entity's forecast. `disabled` if sun input is off and nothing was fetched. |
 | `solar_effect` | Fraction (0–1) of full solar gain available right now — pure geometry and cloud cover, computed regardless of whether the sun term is enabled (see `solar_effect_of` in `heuristic.py`). |
@@ -704,17 +777,17 @@ Indoor is the exception with more than one issue key — see
 | `reason` | Plain-language explanation of the cycle's output, shown on the card. |
 | `price_comfort_tier` | Current price-saving preset (`low`/`mid`/`high`), mirroring `select.<name>_price_saving`. |
 | `cold_caution` | Current cold-caution preset, mirroring `select.<name>_cold_caution`. |
-| `price_response` | Price band response, 0–1, before the cold-caution and recovery-feasibility tapers are applied. |
+| `price_response` | Price band response, 0–1 (including any 30-day historical high-price boost while inside today's expensive band), before the cold-caution and recovery-feasibility tapers are applied. |
 | `cold_brake_factor` | How much price-braking authority survives the cold (caution ramp × measured recovery feasibility), 0–1. |
 | `allowed_sag_c` | How far indoor is currently allowed to coast below target for price. |
 | `upcoming_spike_in_min` | Minutes until a forecast price spike close enough to pre-brake for. `disabled` if price compensation is off. |
 | `precharge_active` | `True` while heat is being deliberately banked ahead of an expensive hour (Savings-first tier only). |
 | `price_braking` | `True` while price compensation is deliberately holding the house below target — tells the learner to freeze rather than read the sag as error. |
 | `lead_minutes_effective` | How far ahead of a spike braking starts — one measured wind-down time. |
-| `price_band_start` | Price at which braking begins today. `disabled` if price compensation is off. |
+| `price_band_start` | Price at which braking begins today (25% above `min(median, mean)` toward peak). `disabled` if price compensation is off. |
 | `price_band_full` | Price at which braking is at full authority today. `disabled` if price compensation is off. |
-| `price_median` | Today's median price — the "ordinary for today" line. Read regardless of whether price compensation is switched on. |
-| `today_price_spread_c` | Today's peak-minus-median price spread, in the price sensor's own units. `None` with no usable day-ahead forecast. Read regardless of whether price compensation is switched on. |
+| `price_median` | Today's median price — read regardless of whether price compensation is switched on. |
+| `today_price_spread_c` | Today's peak-minus-baseline (`min(median, mean)`) price spread, in the price sensor's own units. `None` with no usable day-ahead forecast. Read regardless of whether price compensation is switched on. |
 | `seasonal_reference_spread_c` | The median of the last ~30 stored days' spread — the seasonal reference `price_significance_factor`'s relative term compares today against. `None` during cold start (fewer than 5 stored days). |
 | `price_significance_factor` | Combined 0–1 taper on braking/pre-charge authority for how economically meaningful today's price swing is — see `heuristic.price_significance()`. 1.0 means no damping. |
 | `recommended_compensated_outdoor_temp_c` | What `compensated_outdoor_temperature` would show, computed even in heat-curve-offset mode or while compensation is off. |
@@ -759,6 +832,19 @@ Indoor is the exception with more than one issue key — see
 | `wind_down_time_min` | Measured (or default) time from the pump backing off to the house actually stopping gaining. Typically the longer of the two — see [It measures how long your house takes](#it-measures-how-long-your-house-takes). |
 | `response_time_measured` | `False` while still using the default for your emitter type. |
 | `wind_down_time_measured` | `False` while still using the default for your emitter type. |
+| `response_time_source` / `wind_down_time_source` | `default` or `blended`. |
+| `response_time_readings` / `wind_down_time_readings` | Number of clean readings behind the value. |
+| `response_time_default_min` / `wind_down_time_default_min` | The emitter-type default the blend starts from. |
+
+**Daily pattern (shadow only, never applied)** — see [It watches for a daily pattern](#it-watches-for-a-daily-pattern-shadow-mode).
+
+| Attribute | Meaning |
+| --- | --- |
+| `daily_pattern_status` | Plain-language state: still learning, no consistent pattern, or what it would add. |
+| `daily_pattern_shadow_offset_c` | Offset it would add now; positive means less heat. Not applied. |
+| `daily_pattern_consistent_hours` | Hours of the day whose pattern is trusted. |
+| `daily_pattern_potential_improvement_pct` | Upper bound on how much less the room would swing if acted on. `null` until scored for three days. |
+| `daily_pattern_by_hour_c` | 24 values, midnight first: how much warmer than usual each hour tends to be. `null` for an hour not seen yet. |
 
 **Plumbing**
 
@@ -785,6 +871,13 @@ from "learned something odd at −10 °C and has not been back since".
 
 Set the `custom_components.truetemp` logger to `debug` for a per-cycle
 line from the learner and the lag estimator.
+
+Weather diagnostic log records retain the issued `outdoor_forecast`,
+`wind_forecast_ms` and `solar_forecast` whenever available, including cycles
+without an active pre-ramp. They also carry the weather lookahead reason,
+response window and per-input coverage statuses shown by the status sensor.
+This makes a missing or sub-threshold correction distinguishable from an
+unchanging forecast during offline investigation. Data logging remains opt-in.
 
 ### Dashboard card
 

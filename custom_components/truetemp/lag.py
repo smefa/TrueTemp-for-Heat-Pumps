@@ -74,12 +74,56 @@ simultaneously eases the offset back toward its steady value. Reading that as
 So any offset event whose window contains a target change is discarded, and a
 window in which the house moved the wrong way is discarded regardless.
 
-It degrades honestly. With too few clean events, or events whose response is
-below the sensor's own resolution, `estimate()` reports `measured=False` and
-returns the emitter-type fallback rather than a confident wrong number. A house
-whose target never moves and whose weather never shifts simply keeps the
-fallback, which is the correct outcome: nothing happened, so nothing was
-learned.
+## Only clean, full-window events count
+
+An event's response takes a long time to show (hours for a slab), so it can
+only be read from an observation window of the full `MAX_LAG_MINUTES`. An
+earlier version cut each window short at the NEXT action in either direction
+and then asked when half of the move *inside the truncated window* had arrived.
+That is wrong in a closed loop: the controller moves the offset every 15-60
+minutes, so windows were short, and the "half-way" time of a short window is
+the controller's cadence, not the house's. A house whose one clean event showed
+~225 min read 38 min. A confident, too-short number is the worst outcome here
+(the integrator would be tuned for a house that does not exist), so truncated
+windows are now discarded rather than measured.
+
+An event is therefore a reading only if
+
+- its full window is already in the buffer (it is recorded once, when the
+  window completes, never earlier and never again),
+- no OPPOSITE-direction action (offset or target) falls inside the window,
+  because that reversal's response would cancel this one's. Same-direction
+  continuation moves are fine: they add to the response rather than cancel it,
+  and a later same-direction event inside an earlier one's window is treated as
+  that same action's continuation rather than a second reading,
+- the target held still throughout, and the house moved the right way by more
+  than the sensor's resolution.
+
+## Long memory, and a blend instead of a switch
+
+Clean events are rare: roughly one per few days in a fast house and often none
+in a week in a slow underfloor one. So readings are kept for `READING_MAX_AGE_S`
+(newest `MAX_READINGS` per direction), independent of the 4-day sample buffer,
+and survive restarts, sensor gaps and heating pauses.
+
+The published value is not a switch from default to measured. It is
+
+    value = default + w * (median(readings) - default),  w = n / (n + BLEND_K)
+
+so one reading moves the value only a quarter of the way, and the value
+converges as evidence accumulates. With no readings it is exactly the
+emitter-type fallback. The result is never below `FLOOR_FRACTION` of the
+fallback, because no passive method here measures precisely and a short
+number is the dangerous direction. A change of heating type discards the
+readings, which described a different house.
+
+## The limit that remains
+
+This is a passive estimate from a closed loop, not a system identification:
+even clean events are contaminated by weather, sun and the controller's own
+follow-up moves. The design goal is therefore "never a confident wrong (too
+short) number; default until clean evidence, then move toward it gradually".
+Nothing here claims precision.
 """
 
 from __future__ import annotations
@@ -105,11 +149,12 @@ _FALLBACK_MINUTES: dict[str, tuple[float, float]] = {
 
 # --- Estimator tuning ------------------------------------------------------
 # Longest response time the search considers, and therefore the width of the
-# window examined after each event. Six hours covers a heavy slab.
+# window examined after each event. Six hours covers a heavy slab. A window
+# shorter than this is never measured (see the module docstring).
 MAX_LAG_MINUTES = 360.0
-# How much history to keep. Four days at a 15-minute cadence — long enough to
-# contain several independent events, short enough that a house whose behaviour
-# changes (new emitters, a serviced pump) re-converges in days.
+# How much sample history to keep as the scan window. Four days at a 15-minute
+# cadence: far more than the 24-step event window, so a full window always fits
+# with margin. The *result* does not depend on this buffer; see READING_*.
 BUFFER_SAMPLES = 384
 # How far the offset must move, in one direction, to count as a deliberate
 # action rather than the integrator's ordinary drift.
@@ -121,41 +166,68 @@ EVENT_MAX_STEPS = 8
 # The indoor response must exceed this to be distinguishable from sensor
 # quantisation, which is typically 0.1 degC.
 MIN_RESPONSE_C = 0.08
-# Clean events needed before a direction reports as measured. Low because each
-# event is a direct observation rather than one noisy sample: three consistent
-# answers beat a correlation over hundreds of coupled ones.
-MIN_EVENTS = 3
 # Fraction of the eventual response that counts as "has taken effect".
 RESPONSE_FRACTION = 0.5
-# An event's observation window is cut short by the next action in either
-# direction — otherwise the reversal's response cancels this one's and the
-# event reads as "the house did nothing". Below this many steps there is not
-# enough room left to see anything, and the event is skipped.
-MIN_WINDOW_STEPS = 2
+# Clean readings are kept this long (8 weeks) so rare events accumulate, but a
+# house that really changed (new emitters, a serviced pump) still re-converges.
+READING_MAX_AGE_S = 8 * 7 * 24 * 3600.0
+# Newest readings kept per direction; bounds storage and lets old ones age out.
+MAX_READINGS = 20
+# Blend weight w = n / (n + BLEND_K): one reading moves the value 25% of the way
+# from the default to the measured median, three readings 50%.
+BLEND_K = 3.0
+# A reading-based value never goes below this fraction of the heating type's
+# fallback. Closed-loop contamination biases measurements SHORT, and a too-short
+# lag makes the integrator wind up and oscillate, so the floor bounds the
+# damage of a bad reading that slipped through.
+FLOOR_FRACTION = 0.5
 # How far the comfort target must move to count as a deliberate setpoint step.
 TARGET_STEP_C = 0.3
 
 
 @dataclass(frozen=True)
+class LagReading:
+    """One clean, full-window response measurement."""
+
+    direction: str  # "rise" or "fall"
+    minutes: float
+    at_s: float  # wall-clock (epoch seconds) when it was recorded
+
+
+@dataclass(frozen=True)
 class LagState:
     """Rolling history of what was asked for, what was applied, and what the
-    house did.
+    house did, plus the long-lived clean readings measured from it.
 
-    All three series are sampled on the caller's fixed cadence
+    The three series are sampled on the caller's fixed cadence
     (`step_minutes`), one entry per learner step, oldest first. Storing plain
     aligned series rather than timestamps keeps every lookup a simple index
     shift.
+
+    `sample_counter` counts every sample ever pushed (it survives buffer wipes
+    and shifting), so each event has an absolute index that stays valid as the
+    buffer slides; `evaluated_through` is the highest absolute event index
+    already decided, which is what stops a reading being recorded twice when
+    the buffer is re-scanned every cycle.
     """
 
     offsets_c: tuple[float, ...] = ()
     indoors_c: tuple[float, ...] = ()
     targets_c: tuple[float, ...] = ()
     step_minutes: float = 15.0
+    readings: tuple[LagReading, ...] = ()
+    heating_type: str | None = None
+    sample_counter: int = 0
+    evaluated_through: int = -1
 
 
 @dataclass(frozen=True)
 class LagResult:
-    """Measured (or fallen-back) response times, in minutes."""
+    """Blended (or default) response times, in minutes.
+
+    `*_measured` means at least one clean reading exists; `*_events` is the
+    number of readings behind the value; `*_source` is "default" or "blended".
+    """
 
     rise_minutes: float
     fall_minutes: float
@@ -165,6 +237,10 @@ class LagResult:
     fall_events: int
     samples: int
     reason: str
+    rise_default_minutes: float = 0.0
+    fall_default_minutes: float = 0.0
+    rise_source: str = "default"
+    fall_source: str = "default"
 
     @property
     def rise_hours(self) -> float:
@@ -175,15 +251,33 @@ class LagResult:
         return self.fall_minutes / 60.0
 
 
+def _normalise_type(heating_type: str | None) -> str:
+    key = (heating_type or "").strip().lower()
+    return key if key in _FALLBACK_MINUTES else DEFAULT_HEATING_TYPE
+
+
 def fallback_minutes(heating_type: str | None) -> tuple[float, float]:
     """(rise, fall) fallback for an emitter type, defaulting to radiators."""
-    return _FALLBACK_MINUTES.get(
-        (heating_type or "").strip().lower(), _FALLBACK_MINUTES[DEFAULT_HEATING_TYPE]
-    )
+    return _FALLBACK_MINUTES[_normalise_type(heating_type)]
 
 
 def initial_state(step_minutes: float = 15.0) -> LagState:
     return LagState(step_minutes=max(1.0, step_minutes))
+
+
+def clear_readings(state: LagState) -> LagState:
+    """Drop the readings and the sample buffer, keeping nothing measured.
+
+    The counter is kept so absolute event indices never repeat.
+    """
+    return replace(
+        state,
+        offsets_c=(),
+        indoors_c=(),
+        targets_c=(),
+        readings=(),
+        evaluated_through=state.sample_counter - 1,
+    )
 
 
 def push(
@@ -191,11 +285,11 @@ def push(
 ) -> LagState:
     """Append one sample, dropping the oldest once the buffer is full.
 
-    A missing indoor reading breaks the chain, so the whole buffer is dropped
-    rather than stitched across the gap — a discontinuity would register as a
-    huge fake event with a fabricated response. Rebuilding a few days of buffer
-    is cheap; a corrupted estimate feeds straight into the integrator's time
-    constant.
+    A missing indoor reading breaks the chain, so the whole sample buffer is
+    dropped rather than stitched across the gap — a discontinuity would
+    register as a huge fake event with a fabricated response. The clean
+    readings are NOT dropped: they were measured before the gap and remain
+    valid evidence about the house.
     """
     if indoor_c is None:
         return replace(state, offsets_c=(), indoors_c=(), targets_c=())
@@ -204,6 +298,7 @@ def push(
         offsets_c=(*state.offsets_c, float(offset_c))[-BUFFER_SAMPLES:],
         indoors_c=(*state.indoors_c, float(indoor_c))[-BUFFER_SAMPLES:],
         targets_c=(*state.targets_c, float(target_c))[-BUFFER_SAMPLES:],
+        sample_counter=state.sample_counter + 1,
     )
 
 
@@ -331,104 +426,177 @@ def _candidate_events(state: LagState, rising: bool) -> list[tuple[int, bool]]:
     return sorted(set(events))
 
 
-def _measure(
-    state: LagState, window: int, rising: bool, boundaries: list[int]
-) -> tuple[float | None, int]:
-    """(median response in steps, clean events), or (None, events) if too few.
+def _window_steps(step: float) -> int:
+    return max(1, int(MAX_LAG_MINUTES / step))
 
-    Each event's window is truncated at the next action in either direction, so
-    one event's response is never measured through the reversal that cancels
-    it. `boundaries` is every event index, both directions, in order.
 
-    The median rather than the mean: one event contaminated by an open window
-    or a burst of sun should not drag the estimate, and with a handful of
-    samples a single outlier easily would.
+def _decide_events(
+    state: LagState, window: int
+) -> list[tuple[int, bool, int | None]]:
+    """(buffer index, rising, response steps or None) for every event whose
+    full window is already in the buffer.
+
+    None means the event was decided and discarded. Events whose window has
+    not completed yet are omitted: they are pending, not discarded.
+
+    An event is discarded when an opposite-direction action (offset or target)
+    lands inside its window, when it continues an earlier same-direction event
+    (it would be measured against a response already under way), when the
+    target moved during the window, or when the response is unreadable. The
+    window is never truncated: a truncated window measures the controller's
+    cadence, not the house.
     """
-    responses: list[float] = []
-    for start, is_target_step in _candidate_events(state, rising):
-        limit = window
-        for boundary in boundaries:
-            if boundary > start:
-                # Strictly before the next action: the sample at which it was
-                # applied already belongs to that event, not this one.
-                limit = min(window, boundary - start - 1)
-                break
-        if limit < MIN_WINDOW_STEPS:
-            continue
-        # An offset event during a setpoint transient is unreadable; a target
-        # event is only readable if the target then holds long enough to see
-        # the house arrive.
-        if not _target_holds(state.targets_c, start, limit):
-            continue
-        response = _response_steps(state.indoors_c, start, limit, rising)
-        if response is not None:
-            responses.append(float(response))
-    if len(responses) < MIN_EVENTS:
-        return None, len(responses)
-    return _median(responses), len(responses)
+    samples = len(state.indoors_c)
+    candidates = {rising: _candidate_events(state, rising) for rising in (True, False)}
+    decided: list[tuple[int, bool, int | None]] = []
+    for rising in (True, False):
+        opposite = [index for index, _ in candidates[not rising]]
+        previous: int | None = None
+        for start, _is_target in candidates[rising]:
+            continuation = previous is not None and start - previous <= window
+            previous = start
+            if start + window >= samples:
+                continue
+            steps: int | None = None
+            if (
+                not continuation
+                and not any(start < b <= start + window for b in opposite)
+                and _target_holds(state.targets_c, start, window)
+            ):
+                steps = _response_steps(state.indoors_c, start, window, rising)
+            decided.append((start, rising, steps))
+    return decided
 
 
-def estimate(state: LagState, heating_type: str | None) -> LagResult:
-    """Measure rise and fall times, falling back to the emitter-type defaults.
+def _prune(
+    readings: tuple[LagReading, ...], now_s: float | None
+) -> tuple[LagReading, ...]:
+    """Drop expired readings and keep the newest `MAX_READINGS` per direction."""
+    kept = [
+        r for r in readings
+        if now_s is None or now_s - r.at_s <= READING_MAX_AGE_S
+    ]
+    result: list[LagReading] = []
+    for direction in ("rise", "fall"):
+        own = sorted((r for r in kept if r.direction == direction), key=lambda r: r.at_s)
+        result.extend(own[-MAX_READINGS:])
+    return tuple(sorted(result, key=lambda r: r.at_s))
+
+
+def _same_type(state: LagState, heating_type: str | None) -> bool:
+    return state.heating_type is None or state.heating_type == _normalise_type(
+        heating_type
+    )
+
+
+def harvest(state: LagState, heating_type: str | None, now_s: float) -> LagState:
+    """Record readings for events whose window has just completed.
+
+    Call once per pushed sample. Each event is decided exactly once (tracked by
+    its absolute sample index), so re-scanning the buffer every cycle never
+    re-records a reading, however the buffer has shifted. A heating-type change
+    clears the readings, which described a different house.
+    """
+    current_type = _normalise_type(heating_type)
+    readings = state.readings
+    if not _same_type(state, heating_type):
+        readings = ()
+    step = max(1.0, state.step_minutes)
+    base = state.sample_counter - len(state.indoors_c)
+    mark = state.evaluated_through
+    new: list[LagReading] = []
+    for index, rising, steps in sorted(
+        _decide_events(state, _window_steps(step)), key=lambda e: (e[0], e[1])
+    ):
+        absolute = base + index
+        if absolute <= state.evaluated_through:
+            continue
+        mark = max(mark, absolute)
+        if steps is not None:
+            new.append(
+                LagReading(
+                    direction="rise" if rising else "fall",
+                    minutes=max(step, steps * step),
+                    at_s=now_s,
+                )
+            )
+    return replace(
+        state,
+        readings=_prune((*readings, *new), now_s),
+        heating_type=current_type,
+        evaluated_through=mark,
+    )
+
+
+def _blend(default: float, readings: list[float]) -> tuple[float, bool]:
+    """(value, floored) from a default and the clean readings in minutes."""
+    if not readings:
+        return default, False
+    n = len(readings)
+    weight = n / (n + BLEND_K)
+    value = default + weight * (_median(readings) - default)
+    floor = FLOOR_FRACTION * default
+    return (floor, True) if value < floor else (value, False)
+
+
+def _describe(
+    name: str, minutes: float, default: float, n: int, floored: bool
+) -> str:
+    if n == 0:
+        return f"{name} {minutes:.0f} min (default, no clean readings yet)"
+    plural = "reading" if n == 1 else "readings"
+    note = ", held at floor" if floored else ""
+    return (
+        f"{name} {minutes:.0f} min (default {default:.0f}, blended with "
+        f"{n} clean {plural}{note})"
+    )
+
+
+def estimate(
+    state: LagState, heating_type: str | None, now_s: float | None = None
+) -> LagResult:
+    """Blend the heating-type default with the clean readings.
 
     Never raises and never returns a non-positive time: every downstream
-    consumer divides or schedules by these, so an unusable estimate has to
-    surface as the fallback rather than as a zero.
+    consumer divides or schedules by these. With no readings the value is
+    exactly the fallback. `now_s`, when given, ignores expired readings.
     """
     fb_rise, fb_fall = fallback_minutes(heating_type)
-    step = max(1.0, state.step_minutes)
     samples = len(state.indoors_c)
-    window = max(1, int(MAX_LAG_MINUTES / step))
-
-    if samples < window + 2:
-        return LagResult(
-            rise_minutes=fb_rise,
-            fall_minutes=fb_fall,
-            rise_measured=False,
-            fall_measured=False,
-            rise_events=0,
-            fall_events=0,
-            samples=samples,
-            reason=(
-                f"Building history ({samples} samples); using "
-                f"{heating_type or DEFAULT_HEATING_TYPE} defaults of "
-                f"{fb_rise:.0f} min rise / {fb_fall:.0f} min fall"
-            ),
-        )
-
-    boundaries = sorted(
-        index
-        for rising in (True, False)
-        for index, _ in _candidate_events(state, rising)
+    readings = (
+        _prune(state.readings, now_s) if _same_type(state, heating_type) else ()
     )
-    rise_steps, rise_events = _measure(state, window, True, boundaries)
-    fall_steps, fall_events = _measure(state, window, False, boundaries)
+    rise = [r.minutes for r in readings if r.direction == "rise"]
+    fall = [r.minutes for r in readings if r.direction == "fall"]
+    rise_minutes, rise_floored = _blend(fb_rise, rise)
+    fall_minutes, fall_floored = _blend(fb_fall, fall)
 
-    rise_minutes = fb_rise if rise_steps is None else max(step, rise_steps * step)
-    fall_minutes = fb_fall if fall_steps is None else max(step, fall_steps * step)
-
-    parts = [
-        f"rise {rise_minutes:.0f} min "
-        + (
-            f"measured from {rise_events} events"
-            if rise_steps is not None
-            else f"(fallback, {rise_events} usable events)"
-        ),
-        f"fall {fall_minutes:.0f} min "
-        + (
-            f"measured from {fall_events} events"
-            if fall_steps is not None
-            else f"(fallback, {fall_events} usable events)"
-        ),
-    ]
+    window = _window_steps(max(1.0, state.step_minutes))
+    if not rise and not fall and samples < window + 2:
+        reason = (
+            f"Building history ({samples} samples); using "
+            f"{heating_type or DEFAULT_HEATING_TYPE} defaults of "
+            f"{fb_rise:.0f} min rise / {fb_fall:.0f} min fall"
+        )
+    else:
+        reason = "; ".join(
+            (
+                _describe("rise", rise_minutes, fb_rise, len(rise), rise_floored),
+                _describe("fall", fall_minutes, fb_fall, len(fall), fall_floored),
+            )
+        )
 
     return LagResult(
         rise_minutes=rise_minutes,
         fall_minutes=fall_minutes,
-        rise_measured=rise_steps is not None,
-        fall_measured=fall_steps is not None,
-        rise_events=rise_events,
-        fall_events=fall_events,
+        rise_measured=bool(rise),
+        fall_measured=bool(fall),
+        rise_events=len(rise),
+        fall_events=len(fall),
         samples=samples,
-        reason="; ".join(parts),
+        reason=reason,
+        rise_default_minutes=fb_rise,
+        fall_default_minutes=fb_fall,
+        rise_source="blended" if rise else "default",
+        fall_source="blended" if fall else "default",
     )
